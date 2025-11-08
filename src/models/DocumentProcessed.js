@@ -36,21 +36,6 @@ const DocumentProcessed = sequelize.define('DocumentProcessed', {
     defaultValue: '{}',
     field: 'extracted_json_data'
   },
-  gptTitle: {
-    type: DataTypes.TEXT,
-    allowNull: true,
-    field: 'gpt_title'
-  },
-  gptSummary: {
-    type: DataTypes.TEXT,
-    allowNull: true,
-    field: 'gpt_summary'
-  },
-  gptContactInformation: {
-    type: DataTypes.TEXT,
-    allowNull: true,
-    field: 'gpt_contact_information'
-  },
   approvedAt: {
     type: DataTypes.DATE,
     allowNull: true,

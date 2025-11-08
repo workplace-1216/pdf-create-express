@@ -77,7 +77,6 @@ async function checkCompanyDocuments() {
         console.log(`     Client: ${doc.sourceDocument?.uploader?.email || 'unknown'}`);
         console.log(`     Sent At: ${doc.sentToCompanyAt}`);
         console.log(`     Storage Path: ${doc.filePathFinalPdf}`);
-        console.log(`     GPT Title: ${doc.gptTitle || 'N/A'}`);
       });
       console.log('');
     } else {

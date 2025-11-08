@@ -57,12 +57,6 @@ class TemplateController {
         return res.status(400).json({ message: 'Name and jsonDefinition are required' });
       }
 
-      // Validate template JSON
-      const isValid = await pdfProcessingService.validateTemplate(jsonDefinition);
-      if (!isValid) {
-        return res.status(400).json({ message: 'Invalid template JSON definition' });
-      }
-
       const userId = getCurrentUserId(req);
 
       const template = await TemplateRuleSet.create({
@@ -96,12 +90,7 @@ class TemplateController {
         return res.status(404).json({ message: 'Template not found' });
       }
 
-      // Validate template JSON if provided
       if (jsonDefinition) {
-        const isValid = await pdfProcessingService.validateTemplate(jsonDefinition);
-        if (!isValid) {
-          return res.status(400).json({ message: 'Invalid template JSON definition' });
-        }
         template.jsonDefinition = jsonDefinition;
       }
 

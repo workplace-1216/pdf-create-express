@@ -432,9 +432,7 @@ class CompanyController {
         fileName: doc.sourceDocument?.originalFileName || 'unknown',
         clientEmail: doc.sourceDocument?.uploader?.email || 'unknown',
         sentAt: doc.sentToCompanyAt,
-        extractedData: JSON.parse(doc.extractedJsonData || '{}'),
-        gptTitle: doc.gptTitle,
-        gptSummary: doc.gptSummary
+        extractedData: JSON.parse(doc.extractedJsonData || '{}')
       }));
 
       console.log(`[GetReceivedDocuments] ✅ Returning ${documentDtos.length} documents`);

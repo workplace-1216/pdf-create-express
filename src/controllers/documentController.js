@@ -1,7 +1,6 @@
-const { DocumentOriginal, DocumentProcessed, User, TemplateRuleSet, Notification, DocumentHistory, Company, ClientCompany, CompanyNotification } = require('../models');
+const { DocumentOriginal, DocumentProcessed, User, Notification, DocumentHistory, Company, ClientCompany, CompanyNotification } = require('../models');
 const storageService = require('../services/storageService');
 const pdfProcessingService = require('../services/pdfProcessingService');
-const gptService = require('../services/gptService');
 const { getCurrentUserId, getCurrentUserEmail, getCurrentUserRole } = require('../utils/helpers');
 const { Op } = require('sequelize');
 const archiver = require('archiver');
@@ -22,11 +21,11 @@ class DocumentController {
         return res.status(400).json({ message: 'Only PDF files are allowed' });
       }
 
-      // Validate file size (max 500KB)
-      const maxSizeBytes = 500 * 1024; // 500KB
+      // Validate file size (max 3MB)
+      const maxSizeBytes = 3 * 1024 * 1024; // 3MB
       if (req.file.size > maxSizeBytes) {
-        const sizeInKB = Math.round(req.file.size / 1024);
-        
+        const sizeInMB = (req.file.size / (1024 * 1024)).toFixed(2);
+
         // Log failed upload to history
         const userId = getCurrentUserId(req);
         await DocumentHistory.logAction({
@@ -35,22 +34,21 @@ class DocumentController {
           userRole: 'Client',
           fileName: req.file.originalname,
           fileSizeBytes: req.file.size,
-          errorMessage: `File size exceeds maximum limit of 500KB (${sizeInKB}KB)`
+          errorMessage: `File size exceeds maximum limit of 3MB (${sizeInMB}MB)`
         });
-        
-        return res.status(400).json({ 
-          message: `File size exceeds the maximum limit of 500KB. Your file is ${sizeInKB}KB.`,
-          maxSize: '500KB',
-          fileSize: `${sizeInKB}KB`
+
+        return res.status(400).json({
+          message: `File size exceeds the maximum limit of 3MB. Your file is ${sizeInMB}MB.`,
+          maxSize: '3MB',
+          fileSize: `${sizeInMB}MB`
         });
       }
 
       const userId = getCurrentUserId(req);
       const userEmail = getCurrentUserEmail(req);
-      const templateId = req.body.templateId ? parseInt(req.body.templateId) : 1;
       const batchId = req.body.batchId || null;
 
-      console.log(`File: ${req.file.originalname}, Size: ${req.file.size}, TemplateId: ${templateId}`);
+      console.log(`File: ${req.file.originalname}, Size: ${req.file.size}`);
 
       const pdfBuffer = req.file.buffer;
 
@@ -81,82 +79,15 @@ class DocumentController {
       });
 
       console.log('[DocumentController] ✅ STEP 1: Document record created in database (ID:', document.id, ')');
-      console.log('[DocumentController] 📄 STEP 2: Starting Text Extraction');
 
-      // Extract text from PDF
-      const extractedText = await pdfProcessingService.extractTextFromPdf(pdfBuffer);
-      console.log('[DocumentController] ✅ STEP 2: Text extraction completed. Length:', extractedText.length, 'chars');
-
-      // Call GPT to analyze the text
-      console.log('[DocumentController] 🤖 STEP 3: Calling GPT to analyze text...');
-      const gptPrompt = `Please analyze this PDF document text and provide a title, a summary(min 300 words and max 400 words), and contact information (phone numbers, emails, addresses). Return your response in JSON format with this structure: {"title": "...", "summary": "...", "contactInformation": "..."}.
-
-Document text:
-${extractedText}`;
-
-      const gptResult = await gptService.extractDocumentInfoFromText(extractedText, gptPrompt);
-
-      console.log(`[DocumentController] ✅ STEP 3: GPT Result - Success: ${gptResult.success}`);
-      if (!gptResult.success) {
-        console.log('[DocumentController] ⚠️ GPT Error:', gptResult.errorMessage);
-      }
-
-      console.log('[DocumentController] 📋 STEP 4: Getting or creating template...');
-      // Get or create template
-      let template = await TemplateRuleSet.findByPk(templateId);
-      
-      if (!template) {
-        const availableTemplates = await TemplateRuleSet.findAll({ where: { isActive: true } });
-        
-        if (availableTemplates.length === 0) {
-          // Create default template
-          template = await TemplateRuleSet.create({
-            name: 'Default PDF Processing Template',
-            jsonDefinition: JSON.stringify({
-              metadataRules: {
-                RFC: '(?:RFC|R\\.F\\.C\\.?)[\\s:]*([A-Z0-9]{12,13})',
-                periodo: '(?:Per[ií]odo|Periodo|PERIODO)[\\s:]*([0-9]{1,2}/[0-9]{4})',
-                monto_total: '(?:Total|TOTAL|Monto|MONTO)[\\s:]*\\$?([0-9,]+\\.[0-9]{2})'
-              },
-              pageRules: {
-                keepPages: [1, 2, 3],
-                footerText: '{{vendor.email}}'
-              },
-              coverPage: {
-                enabled: true,
-                fields: {
-                  title: 'Factura Normalizada',
-                  rfc: '{{RFC}}',
-                  periodo: '{{periodo}}',
-                  monto: '{{monto_total}}'
-                }
-              }
-            }),
-            createdByUserId: userId,
-            isActive: true
-          });
-        } else {
-          template = availableTemplates[0];
-        }
-      }
-
-      console.log('[DocumentController] ✅ STEP 4: Template ready (ID:', template.id, ', Name:', template.name, ')');
-
-      // Parse template rules
-      console.log('[DocumentController] 📋 STEP 5: Parsing template rules...');
-      const templateRules = JSON.parse(template.jsonDefinition);
-      console.log('[DocumentController] ✅ STEP 5: Template rules parsed successfully');
-
-      // Process document with template
-      console.log('[DocumentController] 🔄 STEP 6: Processing PDF with template...');
-      const processingResult = await pdfProcessingService.processWithTemplate(
+      // Process PDF (extract all text and create blank PDF)
+      console.log('[DocumentController] 🔄 STEP 2: Processing PDF (extracting text and creating blank PDF)...');
+      const processingResult = await pdfProcessingService.processPdf(
         pdfBuffer,
-        templateRules,
         { email: userEmail, userId: userId.toString() },
-        document.originalFileName,
-        gptResult.success ? gptResult : null
+        document.originalFileName
       );
-      console.log('[DocumentController] ✅ STEP 6: PDF processing completed. Output size:', processingResult.finalPdfBytes.length, 'bytes');
+      console.log('[DocumentController] ✅ STEP 2: PDF processing completed. Output size:', processingResult.finalPdfBytes.length, 'bytes');
 
       // Generate RFC-based filename
       const currentUser = await User.findByPk(userId);
@@ -175,42 +106,30 @@ ${extractedText}`;
       sequentialNumber = allUserDocs.length;
 
       const processedFileName = `${rfcPrefix}-${sequentialNumber.toString().padStart(4, '0')}_document.pdf`;
-      console.log(`[DocumentController] 📝 STEP 7: Generated processed filename: ${processedFileName}`);
+      console.log(`[DocumentController] 📝 STEP 3: Generated processed filename: ${processedFileName}`);
 
       // Store processed document
-      console.log('[DocumentController] 📤 STEP 8: Uploading processed PDF to R2...');
+      console.log('[DocumentController] 📤 STEP 4: Uploading processed PDF to R2...');
       const processedPdfPath = await storageService.saveProcessedPdf(
         processingResult.finalPdfBytes,
         processedFileName,
         userEmail
       );
-      console.log('[DocumentController] ✅ STEP 8: Processed PDF uploaded to R2:', processedPdfPath);
+      console.log('[DocumentController] ✅ STEP 4: Processed PDF uploaded to R2:', processedPdfPath);
 
-      console.log('[DocumentController] 💾 STEP 9: Creating processed document record in database...');
-      console.log('[DocumentController] 🔍 GPT Result Details:');
-      console.log('  - Success:', gptResult.success);
-      console.log('  - Title:', gptResult.title ? `"${gptResult.title.substring(0, 50)}..."` : 'NULL');
-      console.log('  - Summary:', gptResult.summary ? `${gptResult.summary.length} chars` : 'NULL');
-      console.log('  - Contact Info:', gptResult.contactInformation ? `"${gptResult.contactInformation.substring(0, 50)}..."` : 'NULL');
+      console.log('[DocumentController] 💾 STEP 5: Creating processed document record in database...');
 
       // Create processed document record
       const processedDocument = await DocumentProcessed.create({
         sourceDocumentId: document.id,
-        templateRuleSetId: template.id,
+        templateRuleSetId: null,
         filePathFinalPdf: processedPdfPath,
-        extractedJsonData: JSON.stringify(processingResult.extractedFields),
-        gptTitle: gptResult.title || null,
-        gptSummary: gptResult.summary || null,
-        gptContactInformation: gptResult.contactInformation || null,
+        extractedJsonData: '{}',
         status: DocumentProcessed.STATUS.APPROVED,
         createdAt: new Date()
       });
 
-      console.log('[DocumentController] ✅ STEP 9: Processed document saved to database (ID:', processedDocument.id, ')');
-      console.log('[DocumentController] 📊 Saved GPT Data:');
-      console.log('  - gptTitle:', processedDocument.gptTitle ? 'SAVED' : 'NULL');
-      console.log('  - gptSummary:', processedDocument.gptSummary ? 'SAVED' : 'NULL');
-      console.log('  - gptContactInformation:', processedDocument.gptContactInformation ? 'SAVED' : 'NULL');
+      console.log('[DocumentController] ✅ STEP 5: Processed document saved to database (ID:', processedDocument.id, ')');
       console.log('[DocumentController] 🎉 ALL STEPS COMPLETED SUCCESSFULLY!');
 
       // Calculate processing time
@@ -227,11 +146,7 @@ ${extractedText}`;
         batchId: batchId,
         processingTimeMs: processingTimeMs,
         metadata: {
-          processedPath: processedPdfPath,
-          extractedFields: processingResult.extractedFields,
-          gptTitle: gptResult.title,
-          hasGptSummary: !!gptResult.summary,
-          hasContactInfo: !!gptResult.contactInformation
+          processedPath: processedPdfPath
         }
       });
 
@@ -601,11 +516,6 @@ ${extractedText}`;
         downloadLinks: {
           pdfFinalUrl: `/api/documents/client/documents/${id}/file`,
           dataJsonUrl: `/api/documents/client/documents/${id}/data`
-        },
-        gptAnalysis: {
-          title: processedDocument.gptTitle,
-          summary: processedDocument.gptSummary,
-          contactInformation: processedDocument.gptContactInformation
         }
       };
 
