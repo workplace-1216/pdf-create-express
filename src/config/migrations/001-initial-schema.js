@@ -118,6 +118,7 @@ async function runMigration() {
       CREATE TABLE IF NOT EXISTS document_originals (
         id SERIAL PRIMARY KEY,
         uploader_user_id INTEGER NOT NULL,
+        file_path VARCHAR(500),
         original_file_name VARCHAR(255) NOT NULL,
         file_size_bytes BIGINT NOT NULL DEFAULT 0,
         uploaded_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
@@ -125,10 +126,33 @@ async function runMigration() {
         status INTEGER NOT NULL DEFAULT 1 CHECK (status IN (1, 2, 3, 4, 5)),
         FOREIGN KEY (uploader_user_id) REFERENCES users(id) ON DELETE CASCADE
       );
-      
-      COMMENT ON COLUMN document_originals.file_path IS 'Nullable - Original file no longer saved to storage';
-      COMMENT ON COLUMN document_originals.status IS '1=Uploaded, 2=Processing, 3=ReadyForPreview, 4=Approved, 5=Rejected';
     `);
+    
+    // Add missing columns if table already exists (for existing deployments)
+    console.log('🔧 Checking for missing columns in document_originals...');
+    await sequelize.query(`
+      DO $$ 
+      BEGIN
+        IF NOT EXISTS (SELECT 1 FROM information_schema.columns 
+                       WHERE table_name='document_originals' AND column_name='file_path') THEN
+          ALTER TABLE document_originals ADD COLUMN file_path VARCHAR(500);
+          RAISE NOTICE 'Added file_path column';
+        END IF;
+        
+        IF NOT EXISTS (SELECT 1 FROM information_schema.columns 
+                       WHERE table_name='document_originals' AND column_name='upload_batch_id') THEN
+          ALTER TABLE document_originals ADD COLUMN upload_batch_id VARCHAR(100);
+          RAISE NOTICE 'Added upload_batch_id column';
+        END IF;
+        
+        IF NOT EXISTS (SELECT 1 FROM information_schema.columns 
+                       WHERE table_name='document_originals' AND column_name='status') THEN
+          ALTER TABLE document_originals ADD COLUMN status INTEGER NOT NULL DEFAULT 1;
+          RAISE NOTICE 'Added status column';
+        END IF;
+      END $$;
+    `);
+    
     console.log('✅ document_originals table created/verified');
     console.log();
 
@@ -159,6 +183,50 @@ async function runMigration() {
       
       COMMENT ON COLUMN document_processeds.status IS '1=Pending, 2=Approved, 3=Rejected';
     `);
+    
+    // Add missing columns if table already exists (for existing deployments)
+    console.log('🔧 Checking for missing columns in document_processeds...');
+    await sequelize.query(`
+      DO $$ 
+      BEGIN
+        IF NOT EXISTS (SELECT 1 FROM information_schema.columns 
+                       WHERE table_name='document_processeds' AND column_name='is_deleted_by_client') THEN
+          ALTER TABLE document_processeds ADD COLUMN is_deleted_by_client BOOLEAN NOT NULL DEFAULT false;
+          RAISE NOTICE 'Added is_deleted_by_client column';
+        END IF;
+        
+        IF NOT EXISTS (SELECT 1 FROM information_schema.columns 
+                       WHERE table_name='document_processeds' AND column_name='is_sent_to_admin') THEN
+          ALTER TABLE document_processeds ADD COLUMN is_sent_to_admin BOOLEAN NOT NULL DEFAULT false;
+          RAISE NOTICE 'Added is_sent_to_admin column';
+        END IF;
+        
+        IF NOT EXISTS (SELECT 1 FROM information_schema.columns 
+                       WHERE table_name='document_processeds' AND column_name='sent_to_admin_at') THEN
+          ALTER TABLE document_processeds ADD COLUMN sent_to_admin_at TIMESTAMP;
+          RAISE NOTICE 'Added sent_to_admin_at column';
+        END IF;
+        
+        IF NOT EXISTS (SELECT 1 FROM information_schema.columns 
+                       WHERE table_name='document_processeds' AND column_name='is_sent_to_company') THEN
+          ALTER TABLE document_processeds ADD COLUMN is_sent_to_company BOOLEAN NOT NULL DEFAULT false;
+          RAISE NOTICE 'Added is_sent_to_company column';
+        END IF;
+        
+        IF NOT EXISTS (SELECT 1 FROM information_schema.columns 
+                       WHERE table_name='document_processeds' AND column_name='sent_to_company_id') THEN
+          ALTER TABLE document_processeds ADD COLUMN sent_to_company_id INTEGER REFERENCES companies(id) ON DELETE SET NULL;
+          RAISE NOTICE 'Added sent_to_company_id column';
+        END IF;
+        
+        IF NOT EXISTS (SELECT 1 FROM information_schema.columns 
+                       WHERE table_name='document_processeds' AND column_name='sent_to_company_at') THEN
+          ALTER TABLE document_processeds ADD COLUMN sent_to_company_at TIMESTAMP;
+          RAISE NOTICE 'Added sent_to_company_at column';
+        END IF;
+      END $$;
+    `);
+    
     console.log('✅ document_processeds table created/verified');
     console.log();
 
