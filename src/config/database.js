@@ -2,7 +2,7 @@ const { Sequelize } = require('sequelize');
 
 // Use environment variable for DATABASE_URL
 // Railway will provide this automatically when PostgreSQL is linked
-const DATABASE_URL = 'postgresql://postgres:ZFRtEYsfdMwkkRQvWMAgtRHsjhQWmLcK@postgres.railway.internal:5432/railway';
+const DATABASE_URL = 'postgresql://postgres:QlpNvsLeiCtWutsBcpxdltoYitwrzTUc@postgres.railway.internal:5432/railway';
 // const DATABASE_URL = 'postgresql://postgres:123@localhost:5432/pdfportal'
 
 // const sequelize = new Sequelize(DATABASE_URL, {
