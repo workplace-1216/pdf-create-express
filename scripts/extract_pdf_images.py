@@ -83,8 +83,9 @@ def extract_images_from_pdf(pdf_path, output_dir):
                             image = image.convert('RGB')
 
                         # Save to bytes buffer (in memory) instead of disk
+                        # Set DPI to 300 for high-quality output
                         img_buffer = io.BytesIO()
-                        image.save(img_buffer, 'JPEG', quality=85, optimize=True)
+                        image.save(img_buffer, 'JPEG', quality=85, optimize=True, dpi=(300, 300))
                         img_bytes = img_buffer.getvalue()
                         file_size = len(img_bytes)
 
