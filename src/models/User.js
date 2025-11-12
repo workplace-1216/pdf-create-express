@@ -30,6 +30,12 @@ const User = sequelize.define('User', {
     defaultValue: 2, // Client
     comment: '1=Admin, 2=Client, 3=Company'
   },
+  whatsappNumber: {
+    type: DataTypes.STRING(20),
+    allowNull: true,
+    field: 'whatsapp_number',
+    comment: 'WhatsApp contact number for clients (optional)'
+  },
   isActive: {
     type: DataTypes.BOOLEAN,
     allowNull: false,

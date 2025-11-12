@@ -24,6 +24,8 @@ async function runMigration() {
     // 1. Create users table
     // ============================================
     console.log('📋 Step 1: Creating users table...');
+
+    // First, create the base table without new columns if it doesn't exist
     await sequelize.query(`
       CREATE TABLE IF NOT EXISTS users (
         id SERIAL PRIMARY KEY,
@@ -35,9 +37,27 @@ async function runMigration() {
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
       );
-      
-      COMMENT ON COLUMN users.role IS '1=Admin, 2=Client, 3=Company';
     `);
+
+    // Add missing columns if table already exists (for existing deployments)
+    console.log('🔧 Checking for missing columns in users...');
+    await sequelize.query(`
+      DO $$
+      BEGIN
+        IF NOT EXISTS (SELECT 1 FROM information_schema.columns
+                       WHERE table_name='users' AND column_name='whatsapp_number') THEN
+          ALTER TABLE users ADD COLUMN whatsapp_number VARCHAR(20);
+          RAISE NOTICE 'Added whatsapp_number column to users';
+        END IF;
+      END $$;
+    `);
+
+    // Add comments
+    await sequelize.query(`
+      COMMENT ON COLUMN users.role IS '1=Admin, 2=Client, 3=Company';
+      COMMENT ON COLUMN users.whatsapp_number IS 'WhatsApp contact number for clients (optional)';
+    `);
+
     console.log('✅ users table created/verified');
     console.log();
 
@@ -45,6 +65,8 @@ async function runMigration() {
     // 2. Create companies table
     // ============================================
     console.log('📋 Step 2: Creating companies table...');
+
+    // First, create the base table without new columns if it doesn't exist
     await sequelize.query(`
       CREATE TABLE IF NOT EXISTS companies (
         id SERIAL PRIMARY KEY,
@@ -62,11 +84,29 @@ async function runMigration() {
         FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE SET NULL,
         FOREIGN KEY (approved_by_admin_id) REFERENCES users(id) ON DELETE SET NULL
       );
-      
+    `);
+
+    // Add missing columns if table already exists (for existing deployments)
+    console.log('🔧 Checking for missing columns in companies...');
+    await sequelize.query(`
+      DO $$
+      BEGIN
+        IF NOT EXISTS (SELECT 1 FROM information_schema.columns
+                       WHERE table_name='companies' AND column_name='whatsapp_number') THEN
+          ALTER TABLE companies ADD COLUMN whatsapp_number VARCHAR(20) NOT NULL DEFAULT '';
+          RAISE NOTICE 'Added whatsapp_number column to companies';
+        END IF;
+      END $$;
+    `);
+
+    // Add comments
+    await sequelize.query(`
+      COMMENT ON COLUMN companies.whatsapp_number IS 'WhatsApp contact number for company (required)';
       COMMENT ON COLUMN companies.password_hash IS 'Temporary password hash until company is approved';
       COMMENT ON COLUMN companies.user_id IS 'User account for company login (created when approved)';
       COMMENT ON COLUMN companies.status IS 'pending, approved, rejected';
     `);
+
     console.log('✅ companies table created/verified');
     console.log();
 

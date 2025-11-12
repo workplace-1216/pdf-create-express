@@ -24,10 +24,12 @@ const Company = sequelize.define('Company', {
       isEmail: true
     }
   },
-  // whatsapp: {
-  //   type: DataTypes.STRING(20),
-  //   allowNull: true
-  // },
+  whatsappNumber: {
+    type: DataTypes.STRING(20),
+    allowNull: false,
+    field: 'whatsapp_number',
+    comment: 'WhatsApp contact number for company (required)'
+  },
   passwordHash: {
     type: DataTypes.STRING(255),
     allowNull: true,

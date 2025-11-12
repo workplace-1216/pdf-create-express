@@ -51,11 +51,11 @@ class CompanyController {
   // Register new company
   async registerCompany(req, res) {
     try {
-      const { name, rfc, email, whatsapp, password } = req.body;
+      const { name, rfc, email, whatsappNumber, password } = req.body;
 
       // Validate required fields
-      if (!name || !rfc || !email || !password) {
-        return res.status(400).json({ message: 'Name, RFC, email, and password are required' });
+      if (!name || !rfc || !email || !whatsappNumber || !password) {
+        return res.status(400).json({ message: 'Name, RFC, email, WhatsApp number, and password are required' });
       }
 
       // Validate password length
@@ -84,7 +84,7 @@ class CompanyController {
         name,
         rfc,
         email,
-        // whatsapp: whatsapp || null,
+        whatsappNumber,
         passwordHash,
         status: Company.STATUS.PENDING,
         createdAt: new Date()
@@ -145,7 +145,7 @@ class CompanyController {
         name: company.name,
         rfc: company.rfc,
         email: company.email,
-        // whatsapp: company.whatsapp,
+        whatsappNumber: company.whatsappNumber,
         status: company.status,
         hasUserAccount: !!company.userId,
         userEmail: company.user?.email || null,
@@ -211,9 +211,10 @@ class CompanyController {
             passwordHash: company.passwordHash,
             role: User.ROLES.COMPANY,
             rfc: company.rfc,  // ✅ Copy RFC from company to user
+            whatsappNumber: company.whatsappNumber,  // ✅ Copy WhatsApp from company to user
             isActive: true
           });
-          console.log(`[CompanyController] ✅ User created with ID: ${user.id}, Role: ${user.role}, Role Name: ${User.getRoleName(user.role)}, RFC: ${company.rfc}`);
+          console.log(`[CompanyController] ✅ User created with ID: ${user.id}, Role: ${user.role}, Role Name: ${User.getRoleName(user.role)}, RFC: ${company.rfc}, WhatsApp: ${company.whatsappNumber}`);
         } else {
           // Generate temporary password
           const tempPassword = Math.random().toString(36).slice(-8);
@@ -221,9 +222,10 @@ class CompanyController {
             company.email,
             tempPassword,
             User.ROLES.COMPANY,
-            company.rfc  // ✅ Pass RFC to authService
+            company.rfc,  // ✅ Pass RFC to authService
+            company.whatsappNumber  // ✅ Pass WhatsApp to authService
           );
-          console.log(`[CompanyController] ✅ User created via authService, ID: ${user.id}, RFC: ${company.rfc}`);
+          console.log(`[CompanyController] ✅ User created via authService, ID: ${user.id}, RFC: ${company.rfc}, WhatsApp: ${company.whatsappNumber}`);
         }
         
         userId = user.id;

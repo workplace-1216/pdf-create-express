@@ -41,7 +41,7 @@ class AuthController {
 
   async register(req, res) {
     try {
-      const { email, tempPassword, rfc } = req.body;
+      const { email, tempPassword, rfc, whatsappNumber } = req.body;
 
       if (!email || !tempPassword) {
         return res.status(400).json({ message: 'Email and password are required' });
@@ -51,14 +51,14 @@ class AuthController {
       if (rfc) {
         const rfcPattern = /^[A-Z]{4}[0-9]{6}[A-Z0-9]{3}$/;
         if (!rfcPattern.test(rfc)) {
-          return res.status(400).json({ 
-            message: 'RFC inválido. Formato: 4 letras, 6 números, 3 alfanuméricos (Ej: AAAA123456ABC)' 
+          return res.status(400).json({
+            message: 'RFC inválido. Formato: 4 letras, 6 números, 3 alfanuméricos (Ej: AAAA123456ABC)'
           });
         }
       }
 
       // Create Client users by default
-      const user = await authService.registerUser(email, tempPassword, User.ROLES.CLIENT, rfc);
+      const user = await authService.registerUser(email, tempPassword, User.ROLES.CLIENT, rfc, whatsappNumber);
       
       if (!user) {
         return res.status(400).json({ message: 'Email already exists' });

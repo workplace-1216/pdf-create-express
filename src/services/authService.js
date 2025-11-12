@@ -92,7 +92,7 @@ class AuthService {
     return isValid ? user : null;
   }
 
-  async registerUser(email, password, role = User.ROLES.CLIENT, rfc = null) {
+  async registerUser(email, password, role = User.ROLES.CLIENT, rfc = null, whatsappNumber = null) {
     // Check if user exists
     const existingUser = await User.findOne({ where: { email } });
     if (existingUser) {
@@ -100,12 +100,13 @@ class AuthService {
     }
 
     const passwordHash = await this.hashPassword(password);
-    
+
     const user = await User.create({
       email,
       passwordHash,
       role,
       rfc,
+      whatsappNumber,
       isActive: true
     });
 
