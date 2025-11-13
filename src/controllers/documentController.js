@@ -2,6 +2,7 @@ const { DocumentOriginal, DocumentProcessed, User, Notification, DocumentHistory
 const storageService = require('../services/storageService');
 const pdfProcessingService = require('../services/pdfProcessingService');
 const emailService = require('../services/emailService');
+const whatsappService = require('../services/whatsappService');
 const { getCurrentUserId, getCurrentUserEmail, getCurrentUserRole } = require('../utils/helpers');
 const { Op } = require('sequelize');
 const archiver = require('archiver');
@@ -925,6 +926,32 @@ class DocumentController {
         } catch (emailError) {
           console.error(`[DocumentController] ❌ Error sending email to company:`, emailError.message);
           // Don't fail the whole operation if email fails
+        }
+
+        // Send WhatsApp message to company
+        try {
+          const company = await Company.findByPk(selectedCompanyId);
+          if (company && company.whatsappNumber) {
+            console.log(`[DocumentController] 📱 Sending WhatsApp message to company: ${company.whatsappNumber}...`);
+
+            const whatsappResult = await whatsappService.sendDocumentNotification({
+              toWhatsApp: company.whatsappNumber,
+              companyName: company.name,
+              fromName: currentUser.email,
+              documentCount: documentIds.length
+            });
+
+            if (whatsappResult.success) {
+              console.log(`[DocumentController] ✅ WhatsApp message sent successfully to ${company.whatsappNumber}`);
+            } else {
+              console.warn(`[DocumentController] ⚠️ WhatsApp sending failed: ${whatsappResult.message || whatsappResult.error}`);
+            }
+          } else if (company) {
+            console.log(`[DocumentController] ℹ️ Company has no WhatsApp number configured, skipping WhatsApp notification`);
+          }
+        } catch (whatsappError) {
+          console.error(`[DocumentController] ❌ Error sending WhatsApp to company:`, whatsappError.message);
+          // Don't fail the whole operation if WhatsApp fails
         }
       } else {
         await DocumentProcessed.update(
