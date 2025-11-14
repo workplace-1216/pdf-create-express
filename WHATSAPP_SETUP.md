@@ -286,7 +286,7 @@ To receive delivery receipts:
 
 1. In Meta App, go to **WhatsApp > Configuration**
 2. Click **"Edit"** on Webhook
-3. Set **Callback URL**: `https://yourdomain.com/webhook/whatsapp`
+3. Set **Callback URL**: `https://kalonx.com/webhook/whatsapp`
 4. Set **Verify Token**: Your secret token
 5. Subscribe to **messages** events
 

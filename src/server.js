@@ -12,6 +12,7 @@ const notificationRoutes = require('./routes/notificationRoutes');
 const companyRoutes = require('./routes/companyRoutes');
 const companyNotificationRoutes = require('./routes/companyNotificationRoutes');
 const adminNotificationRoutes = require('./routes/adminNotificationRoutes');
+const webhookRoutes = require('./routes/webhookRoutes');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -42,6 +43,9 @@ app.use('/api/notification', notificationRoutes);
 app.use('/api/companies', companyRoutes);
 app.use('/api/company-notifications', companyNotificationRoutes);
 app.use('/api/admin-notifications', adminNotificationRoutes);
+
+// Webhook Routes (no /api prefix for webhooks - external services need direct access)
+app.use('/webhook', webhookRoutes);
 
 // 404 handler
 app.use((req, res) => {

@@ -603,19 +603,19 @@ class PdfProcessingService {
   }
 
   /**
-   * Extract text from PDF using pdfjs-dist
+   * Extract text from PDF using pdfjs-dist (PAGE BY PAGE)
    * @param {Buffer} pdfBuffer - PDF buffer
-   * @returns {Promise<string>} - Extracted text
+   * @returns {Promise<Array<string>>} - Array of text per page
    */
   async extractTextFromPdf(pdfBuffer) {
     try {
       console.log('');
       console.log('========================================');
-      console.log('[PdfProcessingService] 📄 TEXT EXTRACTION STARTED');
+      console.log('[PdfProcessingService] 📄 TEXT EXTRACTION STARTED (PAGE BY PAGE)');
       console.log('========================================');
       console.log(`[PdfProcessingService] 📊 PDF Size: ${(pdfBuffer.length / 1024).toFixed(2)}KB`);
       console.log(`[PdfProcessingService] 📊 Method: pdfjs-dist (Mozilla PDF.js)`);
-      console.log(`[PdfProcessingService] 📊 Extracting embedded text layer...`);
+      console.log(`[PdfProcessingService] 📊 Extracting embedded text layer per page...`);
 
       // Load pdfjs-dist dynamically
       const pdfjsLib = await this.loadPdfJs();
@@ -631,24 +631,25 @@ class PdfProcessingService {
       const numPages = pdfDocument.numPages;
 
       console.log(`[PdfProcessingService] 📊 PDF has ${numPages} page(s)`);
-      console.log(`[PdfProcessingService] 🔄 Processing pages...`);
+      console.log(`[PdfProcessingService] 🔄 Processing pages individually...`);
       console.log('');
 
-      let allText = [];
+      let pagesText = [];
       let pageStats = [];
 
-      // Extract text from each page
+      // Extract text from each page (keep separate, don't combine)
       for (let pageNum = 1; pageNum <= numPages; pageNum++) {
         try {
           const page = await pdfDocument.getPage(pageNum);
           const textContent = await page.getTextContent();
 
-          // Combine all text items
+          // Combine all text items for this page
           const pageText = textContent.items.map(item => item.str).join(' ');
           const charCount = pageText.trim().length;
-          
+
+          pagesText.push(pageText); // Store even if empty
+
           if (charCount > 0) {
-            allText.push(pageText);
             pageStats.push({ page: pageNum, chars: charCount, items: textContent.items.length });
             console.log(`[PdfProcessingService] ✅ Page ${pageNum}: ${charCount} chars extracted (${textContent.items.length} text items)`);
           } else {
@@ -656,25 +657,24 @@ class PdfProcessingService {
           }
         } catch (pageError) {
           console.error(`[PdfProcessingService] ❌ Page ${pageNum}: Error - ${pageError.message}`);
+          pagesText.push(''); // Empty string for failed pages
         }
       }
 
-      const extractedText = allText.join('\n');
-      const totalChars = extractedText.length;
+      const totalChars = pagesText.reduce((sum, text) => sum + text.length, 0);
 
       console.log('');
       console.log('========================================');
       console.log('[PdfProcessingService] 📊 TEXT EXTRACTION COMPLETE');
       console.log('========================================');
+      console.log(`[PdfProcessingService] 📊 Total Pages: ${numPages}`);
       console.log(`[PdfProcessingService] 📊 Total Characters: ${totalChars}`);
       console.log(`[PdfProcessingService] 📊 Pages with Text: ${pageStats.length}/${numPages}`);
       console.log(`[PdfProcessingService] 📊 Pages without Text: ${numPages - pageStats.length}/${numPages}`);
-      
+
       if (totalChars > 0) {
         const avgCharsPerPage = (totalChars / pageStats.length).toFixed(0);
         console.log(`[PdfProcessingService] 📊 Average chars/page: ${avgCharsPerPage}`);
-        console.log(`[PdfProcessingService] 📄 Text Preview (first 200 chars):`);
-        console.log(`[PdfProcessingService] "${extractedText.substring(0, 200)}..."`);
       } else {
         console.log(`[PdfProcessingService] ⚠️ No embedded text found in PDF`);
         console.log(`[PdfProcessingService] 💡 This might be a scanned document or image-only PDF`);
@@ -682,7 +682,7 @@ class PdfProcessingService {
       console.log('========================================');
       console.log('');
 
-      return extractedText;
+      return pagesText; // Return array of strings (one per page)
     } catch (error) {
       console.error('');
       console.error('========================================');
@@ -691,7 +691,7 @@ class PdfProcessingService {
       console.error(`[PdfProcessingService] ❌ Error: ${error.message}`);
       console.error('========================================');
       console.error('');
-      return '';
+      return [];
     }
   }
 
@@ -728,25 +728,31 @@ class PdfProcessingService {
       console.log('[PdfProcessingService] ℹ️ NEW LOGIC: Extract ALL text AND images');
       console.log('========================================');
 
-      // STEP 2A: ALWAYS extract standard text
+      // STEP 2A: ALWAYS extract standard text (PAGE BY PAGE)
       console.log('');
-      console.log('[PdfProcessingService] 📄 === STEP 2A: STANDARD TEXT EXTRACTION ===');
-      console.log('[PdfProcessingService] 📄 Extracting embedded text from PDF...');
+      console.log('[PdfProcessingService] 📄 === STEP 2A: STANDARD TEXT EXTRACTION (PAGE BY PAGE) ===');
+      console.log('[PdfProcessingService] 📄 Extracting embedded text from PDF per page...');
 
+      let pagesText = []; // Array of text per page
       try {
-        standardText = await this.extractTextFromPdf(pdfBuffer);
-        const textLength = standardText ? standardText.trim().length : 0;
+        pagesText = await this.extractTextFromPdf(pdfBuffer);
+        const totalTextLength = pagesText.reduce((sum, text) => sum + (text ? text.trim().length : 0), 0);
 
-        console.log(`[PdfProcessingService] 📄 Standard extraction result: ${textLength} characters`);
+        console.log(`[PdfProcessingService] 📄 Standard extraction result: ${pagesText.length} page(s), ${totalTextLength} total characters`);
 
-        if (textLength > 0) {
-          console.log(`[PdfProcessingService] ✅ Text found! Preview: ${standardText.substring(0, 100)}...`);
+        if (totalTextLength > 0) {
+          const preview = pagesText.find(t => t && t.trim().length > 0) || '';
+          console.log(`[PdfProcessingService] ✅ Text found! Preview: ${preview.substring(0, 100)}...`);
         } else {
           console.log(`[PdfProcessingService] ⚠️ No embedded text found`);
         }
+
+        // For backward compatibility, also keep standardText as combined text
+        standardText = pagesText.join('\n');
       } catch (standardError) {
         console.error('[PdfProcessingService] ❌ Standard extraction error:', standardError.message);
         standardText = '';
+        pagesText = [];
       }
 
       // Check if we have standard text
@@ -768,11 +774,26 @@ class PdfProcessingService {
         images = [];
       }
 
-      // STEP 2C: If images found, send to GPT Vision
+      // STEP 2C: If images found, send to GPT Vision PAGE BY PAGE
+      let gptTextByPage = {}; // Store GPT results per page: {1: {title, mainData, contactInfo}, 2: {...}, ...}
+
       if (images.length > 0) {
         console.log('');
-        console.log('[PdfProcessingService] 🤖 === STEP 2C: GPT VISION PROCESSING ===');
-        console.log(`[PdfProcessingService] 🤖 Found ${images.length} image(s) - sending to GPT Vision...`);
+        console.log('[PdfProcessingService] 🤖 === STEP 2C: GPT VISION PROCESSING (PAGE BY PAGE) ===');
+        console.log(`[PdfProcessingService] 🤖 Found ${images.length} image(s) across pages`);
+
+        // Group images by page number
+        const imagesByPage = {};
+        images.forEach(img => {
+          const pageNum = img.page || 1;
+          if (!imagesByPage[pageNum]) {
+            imagesByPage[pageNum] = [];
+          }
+          imagesByPage[pageNum].push(img);
+        });
+
+        const pagesWithImages = Object.keys(imagesByPage).map(p => parseInt(p)).sort((a, b) => a - b);
+        console.log(`[PdfProcessingService] 🤖 Images found on pages: ${pagesWithImages.join(', ')}`);
 
         // Check if OpenAI is configured
         const openaiConfigured = process.env.OPENAI_API_KEY && process.env.OPENAI_API_KEY.trim().length > 0;
@@ -784,43 +805,45 @@ class PdfProcessingService {
           console.warn('[PdfProcessingService] ⚠️ OpenAI API key NOT configured');
           console.warn('[PdfProcessingService] ⚠️ Cannot extract text from images');
           console.warn('[PdfProcessingService] ℹ Set OPENAI_API_KEY in .env to enable GPT Vision');
-          gptText = { title: '', mainData: '', contactInfo: '' };
+          gptTextByPage = {};
         } else {
           gptProcessingAttempted = true;
 
-          try {
-            console.log(`[PdfProcessingService] 🤖 Sending ${images.length} image(s) to GPT Vision API...`);
+          // Process each page's images separately
+          for (const pageNum of pagesWithImages) {
+            const pageImages = imagesByPage[pageNum];
 
-            const gptStructured = await gptService.extractTextFromMultipleImages(images);
-
-            const totalChars = (gptStructured.title || '').length +
-                             (gptStructured.mainData || '').length +
-                             (gptStructured.contactInfo || '').length;
-
-            if (totalChars > 10) {
-              gptProcessingSucceeded = true;
+            try {
               console.log('');
-              console.log(`[PdfProcessingService] ✅ === GPT VISION SUCCESS ===`);
-              console.log(`[PdfProcessingService] ✅ GPT extracted ${totalChars} characters from ${images.length} images`);
-              console.log(`[PdfProcessingService] ✅ Title: ${gptStructured.title.length} chars`);
-              console.log(`[PdfProcessingService] ✅ Main Data: ${gptStructured.mainData.length} chars`);
-              console.log(`[PdfProcessingService] ✅ Contact: ${gptStructured.contactInfo.length} chars`);
+              console.log(`[PdfProcessingService] 🤖 Processing page ${pageNum} (${pageImages.length} image(s))...`);
 
-              // Store structured data for PDF creation
-              gptText = gptStructured;
-            } else {
-              console.warn('');
-              console.warn('[PdfProcessingService] ⚠️ GPT Vision returned minimal/no text');
-              gptText = { title: '', mainData: '', contactInfo: '' };
+              const gptStructured = await gptService.extractTextFromMultipleImages(pageImages);
+
+              const totalChars = (gptStructured.title || '').length +
+                               (gptStructured.mainData || '').length +
+                               (gptStructured.contactInfo || '').length;
+
+              if (totalChars > 10) {
+                gptTextByPage[pageNum] = gptStructured;
+                gptProcessingSucceeded = true;
+                console.log(`[PdfProcessingService] ✅ Page ${pageNum}: GPT extracted ${totalChars} characters`);
+                console.log(`[PdfProcessingService] ✅   - Title: ${gptStructured.title.length} chars`);
+                console.log(`[PdfProcessingService] ✅   - Main Data: ${gptStructured.mainData.length} chars`);
+                console.log(`[PdfProcessingService] ✅   - Contact: ${gptStructured.contactInfo.length} chars`);
+              } else {
+                console.warn(`[PdfProcessingService] ⚠️ Page ${pageNum}: GPT returned minimal/no text`);
+                gptTextByPage[pageNum] = { title: '', mainData: '', contactInfo: '' };
+              }
+            } catch (gptError) {
+              console.error(`[PdfProcessingService] ❌ Page ${pageNum}: GPT Vision failed - ${gptError.message}`);
+              gptProcessingError = gptError.message;
+              gptTextByPage[pageNum] = { title: '', mainData: '', contactInfo: '' };
             }
-          } catch (gptError) {
-            console.error('');
-            console.error('[PdfProcessingService] ❌ === GPT VISION FAILED ===');
-            console.error('[PdfProcessingService] ❌ GPT error:', gptError.message);
-            console.error('[PdfProcessingService] ❌ Error stack:', gptError.stack);
-            gptProcessingError = gptError.message;
-            gptText = { title: '', mainData: '', contactInfo: '' };
           }
+
+          console.log('');
+          console.log(`[PdfProcessingService] ✅ === GPT VISION COMPLETE ===`);
+          console.log(`[PdfProcessingService] ✅ Processed ${pagesWithImages.length} page(s) with images`);
         }
       } else {
         console.log('');
@@ -874,118 +897,124 @@ class PdfProcessingService {
         }
       }
 
-      // STEP 2D: Prepare structured data for PDF
+      // STEP 2D: Prepare structured data for PDF (PAGE BY PAGE)
       console.log('');
-      console.log('[PdfProcessingService] 📊 === STEP 2D: PREPARING DATA FOR PDF ===');
+      console.log('[PdfProcessingService] 📊 === STEP 2D: PREPARING DATA FOR PDF (PAGE BY PAGE) ===');
 
-      // Prepare structured data for PDF
+      // Prepare structured data for PDF (multi-page support)
       let pdfData = {
-        title: '',
-        mainData: '',
-        contactInfo: ''
+        pages: [], // Array of {title, mainData, contactInfo} for each page
+        title: '', // Overall title (for backward compatibility)
+        mainData: '', // Combined main data (for backward compatibility)
+        contactInfo: '' // Overall contact info
       };
 
-      // Use GPT data if:
-      // 1. GPT processing was attempted and succeeded
-      // 2. GPT returned actual structured data (total chars > 0)
-      // NOTE: Can be from images (GPT Vision) OR from text (GPT text structuring)
-      const hasGptData = gptProcessingSucceeded &&
-                        gptText &&
-                        typeof gptText === 'object' &&
-                        ((gptText.title || '').length + (gptText.mainData || '').length + (gptText.contactInfo || '').length) > 0;
+      // Extract contact info once (apply to all pages)
+      const contactInfo = this.extractContactInfo(standardText);
+      const contactInfoString = [
+        contactInfo.phone ? `TEL: ${contactInfo.phone}` : '',
+        contactInfo.email ? `EMAIL: ${contactInfo.email}` : ''
+      ].filter(s => s).join(' | ');
+
+      console.log(`[PdfProcessingService] 📄 Extracted contact info:`, {
+        email: contactInfo.email || 'none',
+        phone: contactInfo.phone || 'none',
+        address: contactInfo.address ? contactInfo.address.substring(0, 50) + '...' : 'none'
+      });
 
       console.log(`[PdfProcessingService] 📊 Decision factors:`);
       console.log(`[PdfProcessingService] 📊   - Images found: ${images.length}`);
       console.log(`[PdfProcessingService] 📊   - GPT attempted: ${gptProcessingAttempted}`);
       console.log(`[PdfProcessingService] 📊   - GPT succeeded: ${gptProcessingSucceeded}`);
       console.log(`[PdfProcessingService] 📊   - Has standard text: ${hasStandardText}`);
-      console.log(`[PdfProcessingService] 📊   - Will use GPT data: ${hasGptData}`);
+      console.log(`[PdfProcessingService] 📊   - GPT pages available: ${Object.keys(gptTextByPage).length}`);
 
-      if (hasGptData) {
-        // Use GPT structured data (preferred)
-        let mainData = gptText.mainData || '';
-        let contactInfoText = gptText.contactInfo || '';
+      // ALWAYS preserve original page count, use per-page GPT data
+      if (pagesText.length > 0) {
+        // Use page-by-page text extraction to preserve page structure
+        console.log(`[PdfProcessingService] 📄 Creating ${pagesText.length} page(s) from original PDF structure`);
 
-        // Extract contact info from main data (in case GPT didn't separate it properly)
-        const extractedContactInfo = this.extractContactInfo(mainData);
+        // Extract title from first page
+        const firstPageLines = pagesText[0] ? pagesText[0].split('\n').filter(line => line.trim().length > 0) : [];
+        const overallTitle = firstPageLines[0] ? firstPageLines[0].substring(0, 100) : 'Document';
 
-        // Remove any contact info found in main data
-        mainData = this.removeContactInfoFromText(mainData, extractedContactInfo);
+        // If GPT was used on page 1, use its title
+        const finalTitle = gptTextByPage[1] && gptTextByPage[1].title ? gptTextByPage[1].title : overallTitle;
 
-        // Combine GPT contact info with extracted contact info
-        const allContactInfo = [];
+        let pagesWithGPT = 0;
+        let pagesWithText = 0;
 
-        // Add GPT contact info
-        if (contactInfoText && contactInfoText.trim().length > 0) {
-          allContactInfo.push(contactInfoText);
+        // Create a page object for each page in the original PDF
+        for (let i = 0; i < pagesText.length; i++) {
+          const pageNumber = i + 1; // Page numbers start at 1
+          const pageText = pagesText[i] || '';
+
+          // Check if we have GPT data for THIS specific page
+          const hasGptForPage = gptTextByPage[pageNumber] &&
+                                ((gptTextByPage[pageNumber].title || '').length +
+                                 (gptTextByPage[pageNumber].mainData || '').length +
+                                 (gptTextByPage[pageNumber].contactInfo || '').length) > 10;
+
+          let pageMainData;
+          if (hasGptForPage) {
+            // Use GPT-structured data for this page
+            pageMainData = gptTextByPage[pageNumber].mainData || pageText;
+            pageMainData = this.removeContactInfoFromText(pageMainData, contactInfo);
+            pagesWithGPT++;
+            console.log(`[PdfProcessingService] 📄 Page ${pageNumber}: Using GPT Vision data (${pageMainData.length} chars)`);
+          } else {
+            // Use standard extracted text for this page
+            pageMainData = pageText;
+            pageMainData = this.removeContactInfoFromText(pageMainData, contactInfo);
+            pagesWithText++;
+            console.log(`[PdfProcessingService] 📄 Page ${pageNumber}: Using extracted text (${pageMainData.length} chars)`);
+          }
+
+          // Get title for this page (first page only)
+          const pageTitle = i === 0 ? finalTitle : '';
+
+          pdfData.pages.push({
+            title: pageTitle,
+            mainData: pageMainData,
+            contactInfo: contactInfoString
+          });
         }
 
-        // Add extracted contact info (only email and phone, no address)
-        if (extractedContactInfo.email) {
-          allContactInfo.push(`EMAIL: ${extractedContactInfo.email}`);
+        // For backward compatibility
+        pdfData.title = finalTitle;
+        pdfData.mainData = pagesText.map(t => this.removeContactInfoFromText(t, contactInfo)).join('\n');
+        pdfData.contactInfo = contactInfoString;
+
+        // Determine extraction method
+        if (pagesWithGPT > 0 && pagesWithText > 0) {
+          extractionMethod = 'hybrid_gpt_and_text';
+          console.log(`[PdfProcessingService] ✅ HYBRID: ${pagesWithGPT} page(s) with GPT Vision + ${pagesWithText} page(s) with text extraction`);
+        } else if (pagesWithGPT > 0) {
+          extractionMethod = 'gpt_vision_only';
+          console.log(`[PdfProcessingService] ✅ GPT VISION ONLY: All ${pagesWithGPT} page(s) processed with GPT Vision`);
+        } else {
+          extractionMethod = 'library_only_no_gpt';
+          console.log(`[PdfProcessingService] ✅ ========================================`);
+          console.log(`[PdfProcessingService] ✅ Using LIBRARY-BASED extraction ONLY`);
+          console.log(`[PdfProcessingService] ✅ NO GPT API calls made`);
+          console.log(`[PdfProcessingService] ✅ NO OpenAI usage`);
+          console.log(`[PdfProcessingService] ✅ Library: pdfjs-dist (Mozilla PDF.js)`);
+          console.log(`[PdfProcessingService] ✅ Extracted: ${pagesText.length} page(s), ${standardText.length} total characters`);
+          console.log(`[PdfProcessingService] ✅ ========================================`);
         }
-        if (extractedContactInfo.phone) {
-          allContactInfo.push(`TEL: ${extractedContactInfo.phone}`);
-        }
-        // Note: Address intentionally excluded from footer
 
-        pdfData = {
-          title: gptText.title || '',
-          mainData: mainData,
-          contactInfo: allContactInfo.join(' | ')
-        };
-        extractionMethod = 'gpt_structured';
-        console.log(`[PdfProcessingService] ✅ Using GPT structured data from images`);
-        console.log(`[PdfProcessingService] ✅ GPT extracted from ${images.length} image(s) in PDF`);
-      } else if (hasStandardText) {
-        // Fallback to standard text (put in mainData)
-        console.log(`[PdfProcessingService] 📄 Raw extracted text length: ${standardText.length} chars`);
-        console.log(`[PdfProcessingService] 📄 Text preview: ${standardText.substring(0, 200)}...`);
-
-        const lines = standardText.split('\n').filter(line => line.trim().length > 0);
-        console.log(`[PdfProcessingService] 📄 Split into ${lines.length} non-empty lines`);
-
-        // Extract contact info first
-        const contactInfo = this.extractContactInfo(standardText);
-        console.log(`[PdfProcessingService] 📄 Extracted contact info:`, {
-          email: contactInfo.email || 'none',
-          phone: contactInfo.phone || 'none',
-          address: contactInfo.address ? contactInfo.address.substring(0, 50) + '...' : 'none'
-        });
-
-        // Use ALL text for mainData (not just lines.slice(1))
-        let mainDataText = standardText;
-
-        // Remove contact info from main data text using helper function
-        const originalLength = mainDataText.length;
-        mainDataText = this.removeContactInfoFromText(mainDataText, contactInfo);
-        console.log(`[PdfProcessingService] 📄 After removing contact info: ${mainDataText.length} chars (removed ${originalLength - mainDataText.length} chars)`);
-
-        pdfData = {
-          title: lines[0] ? lines[0].substring(0, 100) : 'Document',
-          mainData: mainDataText,
-          contactInfo: [
-            contactInfo.phone ? `TEL: ${contactInfo.phone}` : '',
-            contactInfo.email ? `EMAIL: ${contactInfo.email}` : ''
-            // Note: Address intentionally excluded from footer
-          ].filter(s => s).join(' | ')
-        };
-        extractionMethod = 'library_only_no_gpt';
-        console.log(`[PdfProcessingService] ✅ ========================================`);
-        console.log(`[PdfProcessingService] ✅ Using LIBRARY-BASED extraction ONLY`);
-        console.log(`[PdfProcessingService] ✅ NO GPT API calls made`);
-        console.log(`[PdfProcessingService] ✅ NO OpenAI usage`);
-        console.log(`[PdfProcessingService] ✅ Library: pdfjs-dist (Mozilla PDF.js)`);
-        console.log(`[PdfProcessingService] ✅ Extracted: ${standardText.length} characters`);
-        console.log(`[PdfProcessingService] ✅ Reason: No images found in PDF (${images.length} images)`);
-        console.log(`[PdfProcessingService] ✅ ========================================`);
+        console.log(`[PdfProcessingService] ✅ Total: ${pagesText.length} pages preserved`);
       } else {
-        // No text found
-        pdfData = {
+        // No text found - create one empty page
+        pdfData.pages = [{
           title: 'Document Processed',
           mainData: 'No extractable text found',
           contactInfo: ''
-        };
+        }];
+        pdfData.title = 'Document Processed';
+        pdfData.mainData = 'No extractable text found';
+        pdfData.contactInfo = '';
+
         extractionMethod = 'no_text_found';
         console.warn(`[PdfProcessingService] ⚠️ No text extracted from any source`);
       }
@@ -1186,19 +1215,19 @@ class PdfProcessingService {
   }
 
   /**
-   * Create a branded PDF template matching the design specification
+   * Create a branded PDF template matching the design specification (MULTI-PAGE SUPPORT)
    * Design includes:
-   * - Left and right corner images
-   * - Company logo (centered)
-   * - Title (40px font size)
-   * - Main data content
-   * - Footer with contact information on single line
-   * @param {Object} pdfData - {title, mainData, contactInfo}
+   * - Left and right corner images on each page
+   * - Company logo (centered) on each page
+   * - Title (40px font size) on first page or each page
+   * - Main data content on each page
+   * - Footer with contact information on each page
+   * @param {Object} pdfData - {pages: [{title, mainData, contactInfo}], title, mainData, contactInfo}
    * @param {Object} vendorContext - Vendor information
    */
   async createBrandedTemplate(pdfData, vendorContext) {
     try {
-      console.log('[PdfProcessingService] 🎨 Creating branded template...');
+      console.log('[PdfProcessingService] 🎨 Creating branded template (MULTI-PAGE SUPPORT)...');
 
       // Create new PDF document
       const pdfDoc = await PDFDocument.create();
@@ -1213,262 +1242,302 @@ class PdfProcessingService {
       const pageWidth = 595.28; // 8.27 inches * 72 points/inch
       const pageHeight = 841.89; // 11.69 inches * 72 points/inch
 
-      // Add first page
-      const page = pdfDoc.addPage([pageWidth, pageHeight]);
+      // Determine how many pages to create
+      const pagesToCreate = pdfData.pages && pdfData.pages.length > 0 ? pdfData.pages : [{
+        title: pdfData.title || 'Document',
+        mainData: pdfData.mainData || '',
+        contactInfo: pdfData.contactInfo || ''
+      }];
 
-      // Draw grayscale background (15% gray for visible grayscale 8-bit)
-      // Using grayscale value 0.85 = 15% gray (clearly visible, not white)
-      page.drawRectangle({
-        x: 0,
-        y: 0,
-        width: pageWidth,
-        height: pageHeight,
-        color: grayscale(0.85), // 15% gray background - grayscale 8-bit
-      });
+      console.log(`[PdfProcessingService] 📄 Creating ${pagesToCreate.length} page(s)...`);
 
-      console.log('[PdfProcessingService] ✅ Grayscale 8-bit background applied (85% brightness, 15% gray)');
+      // Create each page
+      for (let pageIndex = 0; pageIndex < pagesToCreate.length; pageIndex++) {
+        const pageData = pagesToCreate[pageIndex];
+        const isFirstPage = pageIndex === 0;
 
-      // === STEP 1: Draw images at top corners ===
+        console.log(`[PdfProcessingService] 📄 Creating page ${pageIndex + 1}/${pagesToCreate.length}...`);
 
-      // Draw left.png at left-top corner
-      if (images.leftImage) {
-        const leftWidth = 60;  // Reduced from 150
-        const leftHeight = 115; // Reduced from 120
+        // Add new page
+        const page = pdfDoc.addPage([pageWidth, pageHeight]);
 
-        page.drawImage(images.leftImage, {
-          x: 0, // Left margin
-          y: pageHeight - leftHeight - 20, // Top margin
-          width: leftWidth,
-          height: leftHeight,
+        // Draw grayscale background (15% gray for visible grayscale 8-bit)
+        // Using grayscale value 0.85 = 15% gray (clearly visible, not white)
+        page.drawRectangle({
+          x: 0,
+          y: 0,
+          width: pageWidth,
+          height: pageHeight,
+          color: grayscale(0.85), // 15% gray background - grayscale 8-bit
         });
 
-        console.log('[PdfProcessingService] ✅ Left image embedded');
-      }
+        // === STEP 1: Draw images at top corners on EVERY page ===
 
-      // Draw right.jpg at right-top corner (far top)
-      if (images.rightImage) {
-        const rightWidth = 170;
-        const rightHeight = 220;
+        // Draw left.png at left-top corner
+        if (images.leftImage) {
+          const leftWidth = 60;
+          const leftHeight = 115;
 
-        page.drawImage(images.rightImage, {
-          x: pageWidth - rightWidth, // Right margin
-          y: pageHeight - rightHeight, // Top margin
-          width: rightWidth,
-          height: rightHeight,
-        });
-
-        console.log('[PdfProcessingService] ✅ Right image embedded');
-      }
-
-      // Draw logo centered if available
-      if (images.logo) {
-        const logoWidth = 100;
-        const logoHeight = 80;
-
-        // Center logo horizontally
-        const logoX = (pageWidth - logoWidth) / 2;
-
-        page.drawImage(images.logo, {
-          x: logoX,
-          y: pageHeight - 120,
-          width: logoWidth,
-          height: logoHeight,
-        });
-
-        console.log('[PdfProcessingService] ✅ Company logo embedded (centered)');
-      }
-
-      // === STEP 2: Add title section (40px font size, multi-line support) ===
-      let titleY = pageHeight - 200;
-
-      // Use title from structured data
-      const titleText = (pdfData.title || 'Document').trim();
-
-      // Wrap title text to fit within page width
-      const titleFontSize = 40;
-      const titleLineHeight = 50; // Increased spacing between title lines (40px font + 10px spacing)
-      const titleMaxWidth = pageWidth - 100;
-
-      // Split title into lines if needed
-      const titleLines = this.wrapTextForPdf(titleText, fontBold, titleFontSize, titleMaxWidth);
-
-      // Draw each title line
-      for (const titleLine of titleLines) {
-        page.drawText(titleLine, {
-          x: 50,
-          y: titleY,
-          size: titleFontSize,
-          font: fontBold,
-          color: grayscale(0),
-        });
-        titleY -= titleLineHeight; // Move down for next line
-      }
-
-      console.log('[PdfProcessingService] ✅ Title added (40px font, multi-line)');
-
-      // === STEP 3: Add main data section ===
-      const margin = 50;
-      let contentY = titleY - 24;  // Reduced by 1/2 (was 48, now 24)
-      const lineHeight = 24;  // Increased by 1.5x (was 16, now 24)
-      const contentFontSize = 12;  // Increased from 10 to 12 (+2px)
-      const maxWidth = pageWidth - (2 * margin);
-
-      // Use main data from structured data (contact info excluded - will be in footer)
-      const contentText = pdfData.mainData || '';
-
-      // Wrap and add main data text
-      const wrappedLines = this.wrapTextForPdf(contentText, font, contentFontSize, maxWidth);
-
-      for (const line of wrappedLines) {
-        if (contentY < 180) { // Leave space for footer
-          break;
+          page.drawImage(images.leftImage, {
+            x: 0, // Left margin
+            y: pageHeight - leftHeight - 20, // Top margin
+            width: leftWidth,
+            height: leftHeight,
+          });
         }
 
-        page.drawText(line, {
-          x: margin,
-          y: contentY,
-          size: contentFontSize,
-          font: font,
-          color: grayscale(0),
-        });
+        // Draw right.jpg at right-top corner
+        if (images.rightImage) {
+          const rightWidth = 170;
+          const rightHeight = 220;
 
-        contentY -= lineHeight;
-      }
+          page.drawImage(images.rightImage, {
+            x: pageWidth - rightWidth, // Right margin
+            y: pageHeight - rightHeight, // Top margin
+            width: rightWidth,
+            height: rightHeight,
+          });
+        }
 
-      console.log('[PdfProcessingService] ✅ Main data added');
+        // Draw logo centered if available
+        if (images.logo) {
+          const logoWidth = 100;
+          const logoHeight = 80;
 
-      // === STEP 4: Add footer line and contact information (single line) ===
-      const footerY = 100;
+          // Center logo horizontally
+          const logoX = (pageWidth - logoWidth) / 2;
 
-      // Draw horizontal line
-      page.drawLine({
-        start: { x: margin, y: footerY },
-        end: { x: pageWidth - margin, y: footerY },
-        thickness: 1,
-        color: grayscale(0.5),
-      });
+          page.drawImage(images.logo, {
+            x: logoX,
+            y: pageHeight - 120,
+            width: logoWidth,
+            height: logoHeight,
+          });
+        }
 
-      // Add "Agenda tu visita al" label
-      page.drawText('Agenda tu visita al', {
-        x: margin,
-        y: footerY - 20,
-        size: 8,
-        font: font,
-        color: grayscale(0.3),
-      });
+        // === STEP 2: Add title section (36px font size, only on first page or if specified) ===
+        let titleY = pageHeight - 200;
 
-      // Add contact information on same line (only phone and email, no labels)
-      if (pdfData.contactInfo && pdfData.contactInfo.trim().length > 0) {
-        let phone = '';
-        let email = '';
+        // Use title from page data (show on first page, or if explicitly provided for this page)
+        let titleText = (isFirstPage && pageData.title ? pageData.title : (pageData.title || '')).trim();
 
-        // Extract phone number (handle multiple formats and labels)
-        const phonePatterns = [
-          /(?:TEL[ÉE]FONO|TELEPHONE|PHONE|TEL|CELULAR|MÓVIL|MOVIL)[\s:]*([+\d\s\-\(\)\.]+)/gi,
-          /([+\d][\d\s\-\(\)\.]{8,})/g // Fallback: any sequence that looks like a phone number
-        ];
+        // Remove contact info from title (email, phone, address)
+        if (titleText) {
+          // Remove emails
+          titleText = titleText.replace(/[a-zA-Z0-9._-]+@[a-zA-Z0-9._-]+\.[a-zA-Z0-9_-]+/gi, '').trim();
 
-        for (const pattern of phonePatterns) {
-          const match = pdfData.contactInfo.match(pattern);
-          if (match) {
-            phone = match[0]
-              .replace(/(?:TEL[ÉE]FONO|TELEPHONE|PHONE|TEL|CELULAR|MÓVIL|MOVIL)[\s:]*/gi, '')
-              .trim();
-            break;
+          // Remove phone numbers with various formats
+          titleText = titleText.replace(/(?:Phone|Telephone|Tel|Teléfono|Cell|Mobile|TEL)[\s:]*[+\d\s\-\(\)\.]{10,20}/gi, '').trim();
+          titleText = titleText.replace(/\+?[\d\s\-\(\)]{10,20}/g, '').trim();
+
+          // Remove address patterns (e.g., "Address:", "Dirección:")
+          titleText = titleText.replace(/(?:Address|Dirección|Domicilio|Location)[\s:][^\n]+/gi, '').trim();
+
+          // Clean up multiple spaces and empty lines
+          titleText = titleText.replace(/\s{2,}/g, ' ').trim();
+        }
+
+        // Wrap title text to fit within page width
+        if (titleText) {
+          const titleFontSize = 30;  // Reduced from 40px to 30px (-10px total)
+          const titleLineHeight = 40; // Adjusted spacing (30px font + 10px spacing)
+          const titleMaxWidth = pageWidth - 100;
+
+          // Split title into lines if needed
+          const titleLines = this.wrapTextForPdf(titleText, fontBold, titleFontSize, titleMaxWidth);
+
+          // Draw each title line
+          for (const titleLine of titleLines) {
+            const sanitizedTitleLine = this.sanitizeTextForPdf(titleLine);
+
+            try {
+              page.drawText(sanitizedTitleLine, {
+                x: 50,
+                y: titleY,
+                size: titleFontSize,
+                font: fontBold,
+                color: grayscale(0),
+              });
+            } catch (err) {
+              console.warn(`[PdfProcessingService] ⚠️ Cannot draw title, skipping: ${sanitizedTitleLine.substring(0, 50)}`);
+            }
+
+            titleY -= titleLineHeight; // Move down for next line
           }
         }
 
-        // Extract email (handle multiple formats and labels)
-        const emailPattern = /(?:EMAIL|E-MAIL|CORREO)?[\s:]*([a-zA-Z0-9._-]+@[a-zA-Z0-9._-]+\.[a-zA-Z0-9_-]+)/gi;
-        const emailMatch = pdfData.contactInfo.match(emailPattern);
-        if (emailMatch) {
-          email = emailMatch[0]
-            .replace(/(?:EMAIL|E-MAIL|CORREO)[\s:]*/gi, '')
-            .trim();
+        // === STEP 3: Add main data section ===
+        const margin = 50;
+        let contentY = titleY - 24;  // Reduced by 1/2 (was 48, now 24)
+        const lineHeight = 24;  // Increased by 1.5x (was 16, now 24)
+        const contentFontSize = 12;  // Increased from 10 to 12 (+2px)
+        const maxWidth = pageWidth - (2 * margin);
+
+        // Use main data from THIS PAGE (contact info excluded - will be in footer)
+        const contentText = pageData.mainData || '';
+
+        // Wrap and add main data text
+        const wrappedLines = this.wrapTextForPdf(contentText, font, contentFontSize, maxWidth);
+
+        for (const line of wrappedLines) {
+          if (contentY < 180) { // Leave space for footer
+            break;
+          }
+
+          // Sanitize before drawing (wrapTextForPdf already sanitizes, but be safe)
+          const sanitizedLine = this.sanitizeTextForPdf(line);
+
+          try {
+            page.drawText(sanitizedLine, {
+              x: margin,
+              y: contentY,
+              size: contentFontSize,
+              font: font,
+              color: grayscale(0),
+            });
+          } catch (err) {
+            console.warn(`[PdfProcessingService] ⚠️ Cannot draw text, skipping line: ${sanitizedLine.substring(0, 50)}`);
+          }
+
+          contentY -= lineHeight;
         }
 
-        // Display phone and email on same line with spacing
-        if (phone || email) {
-          const contactItems = [];
-          if (phone) contactItems.push(phone);
-          if (email) contactItems.push(email);
+        // === STEP 4: Add footer line and contact information (single line) on EVERY page ===
+        const footerY = 100;
 
-          // Join with spacing - use 20 spaces for clear separation
-          const contactText = contactItems.join('                    '); // 20 spaces
-
-          page.drawText(contactText, {
-            x: margin,
-            y: footerY - 40,
-            size: 9,
-            font: font,
-            color: grayscale(0),
-          });
-
-          console.log(`[PdfProcessingService] ✅ Contact info on ONE line: "${contactText}"`);
-        }
-      }
-
-      // Add company logo and text on right side of footer
-      if (images.companyLogo) {
-        // Company logo dimensions
-        const logoWidth = 40;
-        const logoHeight = 40;
-        const logoX = pageWidth - margin - logoWidth - 120; // Position with space for text
-        const logoY = footerY - 50;
-
-        // Draw company logo
-        page.drawImage(images.companyLogo, {
-          x: logoX,
-          y: logoY,
-          width: logoWidth,
-          height: logoHeight,
+        // Draw horizontal line
+        page.drawLine({
+          start: { x: margin, y: footerY },
+          end: { x: pageWidth - margin, y: footerY },
+          thickness: 1,
+          color: grayscale(0.5),
         });
 
-        // Add text to the right of logo
-        const textX = logoX + logoWidth + 10; // 10px spacing after logo
-        const textStartY = logoY + 30; // Start from top of logo area
-
-        // Line 1: "seer"
-        page.drawText('seer', {
-          x: textX,
-          y: textStartY,
-          size: 10,
-          font: fontBold,
-          color: grayscale(0),
-        });
-
-        // Line 2: "tráfico s.c."
-        page.drawText('tráfico s.c.', {
-          x: textX,
-          y: textStartY - 12,
-          size: 9,
-          font: font,
-          color: grayscale(0),
-        });
-
-        // Line 3: "Expertos en Import/Export"
-        page.drawText('Expertos en Import/Export', {
-          x: textX,
-          y: textStartY - 24,
+        // Add "Agenda tu visita al" label
+        page.drawText('Agenda tu visita al', {
+          x: margin,
+          y: footerY - 20,
           size: 8,
           font: font,
           color: grayscale(0.3),
         });
 
-        console.log('[PdfProcessingService] ✅ Company logo and text added to footer (right side)');
-      }
+        // Add contact information on same line (only phone and email, no labels)
+        if (pageData.contactInfo && pageData.contactInfo.trim().length > 0) {
+          let phone = '';
+          let email = '';
 
-      // Add metadata footer
-      page.drawText('Grayscale 8-bit | 300 DPI | PDF Gate Processing System', {
-        x: margin,
-        y: 20,
-        size: 7,
-        font: font,
-        color: grayscale(0.6),
-        opacity: 0.5,
-      });
+          // Extract phone number (handle multiple formats and labels)
+          const phonePatterns = [
+            /(?:TEL[ÉE]FONO|TELEPHONE|PHONE|TEL|CELULAR|MÓVIL|MOVIL)[\s:]*([+\d\s\-\(\)\.]+)/gi,
+            /([+\d][\d\s\-\(\)\.]{8,})/g // Fallback: any sequence that looks like a phone number
+          ];
 
-      console.log('[PdfProcessingService] ✅ Branded template created with geometric shapes and footer');
+          for (const pattern of phonePatterns) {
+            const match = pageData.contactInfo.match(pattern);
+            if (match) {
+              phone = match[0]
+                .replace(/(?:TEL[ÉE]FONO|TELEPHONE|PHONE|TEL|CELULAR|MÓVIL|MOVIL)[\s:]*/gi, '')
+                .trim();
+              break;
+            }
+          }
+
+          // Extract email (handle multiple formats and labels)
+          const emailPattern = /(?:EMAIL|E-MAIL|CORREO)?[\s:]*([a-zA-Z0-9._-]+@[a-zA-Z0-9._-]+\.[a-zA-Z0-9_-]+)/gi;
+          const emailMatch = pageData.contactInfo.match(emailPattern);
+          if (emailMatch) {
+            email = emailMatch[0]
+              .replace(/(?:EMAIL|E-MAIL|CORREO)[\s:]*/gi, '')
+              .trim();
+          }
+
+          // Display phone and email on same line with spacing
+          if (phone || email) {
+            const contactItems = [];
+            if (phone) contactItems.push(phone);
+            if (email) contactItems.push(email);
+
+            // Join with spacing - use 20 spaces for clear separation
+            const contactText = contactItems.join('                    '); // 20 spaces
+            const sanitizedContactText = this.sanitizeTextForPdf(contactText);
+
+            try {
+              page.drawText(sanitizedContactText, {
+                x: margin,
+                y: footerY - 40,
+                size: 9,
+                font: font,
+                color: grayscale(0),
+              });
+            } catch (err) {
+              console.warn(`[PdfProcessingService] ⚠️ Cannot draw contact info: ${err.message}`);
+            }
+          }
+        }
+
+        // Add company logo and text on right side of footer
+        if (images.companyLogo) {
+          // Company logo dimensions
+          const logoWidth = 40;
+          const logoHeight = 40;
+          const logoX = pageWidth - margin - logoWidth - 120; // Position with space for text
+          const logoY = footerY - 50;
+
+          // Draw company logo
+          page.drawImage(images.companyLogo, {
+            x: logoX,
+            y: logoY,
+            width: logoWidth,
+            height: logoHeight,
+          });
+
+          // Add text to the right of logo
+          const textX = logoX + logoWidth + 10; // 10px spacing after logo
+          const textStartY = logoY + 30; // Start from top of logo area
+
+          // Line 1: "seer"
+          page.drawText('seer', {
+            x: textX,
+            y: textStartY,
+            size: 10,
+            font: fontBold,
+            color: grayscale(0),
+          });
+
+          // Line 2: "tráfico s.c."
+          page.drawText('tráfico s.c.', {
+            x: textX,
+            y: textStartY - 12,
+            size: 9,
+            font: font,
+            color: grayscale(0),
+          });
+
+          // Line 3: "Expertos en Import/Export"
+          page.drawText('Expertos en Import/Export', {
+            x: textX,
+            y: textStartY - 24,
+            size: 8,
+            font: font,
+            color: grayscale(0.3),
+          });
+        }
+
+        // Add metadata footer
+        page.drawText('Grayscale 8-bit | 300 DPI | PDF Gate Processing System', {
+          x: margin,
+          y: 20,
+          size: 7,
+          font: font,
+          color: grayscale(0.6),
+          opacity: 0.5,
+        });
+
+        console.log(`[PdfProcessingService] ✅ Page ${pageIndex + 1}/${pagesToCreate.length} complete`);
+      } // End of page loop
+
+      console.log(`[PdfProcessingService] ✅ All ${pagesToCreate.length} page(s) created with branding`);
 
       return pdfDoc;
     } catch (error) {
@@ -1658,9 +1727,31 @@ class PdfProcessingService {
     }
   }
 
+  /**
+   * Sanitize text to remove characters that WinAnsi encoding cannot handle
+   * @param {string} text - Text to sanitize
+   * @returns {string} - Sanitized text
+   */
+  sanitizeTextForPdf(text) {
+    if (!text) return '';
+
+    return text
+      // Replace various apostrophes and quotes with standard ASCII versions
+      .replace(/[\u02BC\u2018\u2019\u201A\u201B]/g, "'")  // Single quotes/apostrophes
+      .replace(/[\u201C\u201D\u201E\u201F]/g, '"')        // Double quotes
+      .replace(/[\u2013\u2014]/g, '-')                    // En dash, em dash
+      .replace(/[\u2026]/g, '...')                        // Ellipsis
+      .replace(/[\u00A0]/g, ' ')                          // Non-breaking space
+      // Remove any remaining characters outside WinAnsi range (0x20-0x7E and 0xA0-0xFF)
+      .replace(/[^\x20-\x7E\xA0-\xFF]/g, '');
+  }
+
   wrapTextForPdf(text, font, fontSize, maxWidth) {
     const lines = [];
-    const paragraphs = text.split('\n');
+
+    // Sanitize text first to prevent encoding errors
+    const sanitizedText = this.sanitizeTextForPdf(text);
+    const paragraphs = sanitizedText.split('\n');
 
     for (const paragraph of paragraphs) {
       if (!paragraph.trim()) {
@@ -1673,13 +1764,20 @@ class PdfProcessingService {
 
       for (const word of words) {
         const testLine = currentLine ? `${currentLine} ${word}` : word;
-        const width = font.widthOfTextAtSize(testLine, fontSize);
 
-        if (width > maxWidth && currentLine) {
-          lines.push(currentLine);
-          currentLine = word;
-        } else {
-          currentLine = testLine;
+        try {
+          const width = font.widthOfTextAtSize(testLine, fontSize);
+
+          if (width > maxWidth && currentLine) {
+            lines.push(currentLine);
+            currentLine = word;
+          } else {
+            currentLine = testLine;
+          }
+        } catch (err) {
+          // If encoding fails, skip this word
+          console.warn(`[PdfProcessingService] ⚠️ Cannot encode word, skipping: ${word.substring(0, 20)}`);
+          continue;
         }
       }
 
