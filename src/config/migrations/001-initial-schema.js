@@ -34,6 +34,10 @@ async function runMigration() {
         password_hash VARCHAR(255) NOT NULL,
         role INTEGER NOT NULL DEFAULT 2 CHECK (role IN (1, 2, 3)),
         is_active BOOLEAN NOT NULL DEFAULT true,
+        is_email_verified BOOLEAN NOT NULL DEFAULT FALSE,
+        otp_code VARCHAR(6),
+        otp_expiry TIMESTAMP,
+        otp_attempts INTEGER NOT NULL DEFAULT 0,
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
       );
@@ -49,13 +53,50 @@ async function runMigration() {
           ALTER TABLE users ADD COLUMN whatsapp_number VARCHAR(20);
           RAISE NOTICE 'Added whatsapp_number column to users';
         END IF;
+
+        -- 2FA Email OTP fields
+        IF NOT EXISTS (SELECT 1 FROM information_schema.columns
+                       WHERE table_name='users' AND column_name='is_email_verified') THEN
+          ALTER TABLE users ADD COLUMN is_email_verified BOOLEAN NOT NULL DEFAULT FALSE;
+          RAISE NOTICE 'Added is_email_verified column to users';
+        END IF;
+
+        IF NOT EXISTS (SELECT 1 FROM information_schema.columns
+                       WHERE table_name='users' AND column_name='otp_code') THEN
+          ALTER TABLE users ADD COLUMN otp_code VARCHAR(6);
+          RAISE NOTICE 'Added otp_code column to users';
+        END IF;
+
+        IF NOT EXISTS (SELECT 1 FROM information_schema.columns
+                       WHERE table_name='users' AND column_name='otp_expiry') THEN
+          ALTER TABLE users ADD COLUMN otp_expiry TIMESTAMP;
+          RAISE NOTICE 'Added otp_expiry column to users';
+        END IF;
+
+        IF NOT EXISTS (SELECT 1 FROM information_schema.columns
+                       WHERE table_name='users' AND column_name='otp_attempts') THEN
+          ALTER TABLE users ADD COLUMN otp_attempts INTEGER NOT NULL DEFAULT 0;
+          RAISE NOTICE 'Added otp_attempts column to users';
+        END IF;
       END $$;
+    `);
+
+    // Mark existing users as email verified (backward compatibility only)
+    // New users will require email verification via OTP
+    await sequelize.query(`
+      UPDATE users
+      SET is_email_verified = TRUE
+      WHERE is_email_verified = FALSE;
     `);
 
     // Add comments
     await sequelize.query(`
       COMMENT ON COLUMN users.role IS '1=Admin, 2=Client, 3=Company';
       COMMENT ON COLUMN users.whatsapp_number IS 'WhatsApp contact number for clients (optional)';
+      COMMENT ON COLUMN users.is_email_verified IS '2FA: Whether the user has verified their email with OTP (Required for ALL users: Admin, Client, Company)';
+      COMMENT ON COLUMN users.otp_code IS '2FA: 6-digit OTP code for email verification (Required for ALL users)';
+      COMMENT ON COLUMN users.otp_expiry IS '2FA: Expiry time for the OTP code (Required for ALL users)';
+      COMMENT ON COLUMN users.otp_attempts IS '2FA: Number of failed OTP verification attempts (Required for ALL users)';
     `);
 
     console.log('✅ users table created/verified');
@@ -79,6 +120,10 @@ async function runMigration() {
         approved_at TIMESTAMP,
         approved_by_admin_id INTEGER,
         rejection_reason TEXT,
+        is_email_verified BOOLEAN NOT NULL DEFAULT FALSE,
+        otp_code VARCHAR(6),
+        otp_expiry TIMESTAMP,
+        otp_attempts INTEGER NOT NULL DEFAULT 0,
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE SET NULL,
@@ -96,7 +141,39 @@ async function runMigration() {
           ALTER TABLE companies ADD COLUMN whatsapp_number VARCHAR(20) NOT NULL DEFAULT '';
           RAISE NOTICE 'Added whatsapp_number column to companies';
         END IF;
+
+        -- 2FA Email OTP fields
+        IF NOT EXISTS (SELECT 1 FROM information_schema.columns
+                       WHERE table_name='companies' AND column_name='is_email_verified') THEN
+          ALTER TABLE companies ADD COLUMN is_email_verified BOOLEAN NOT NULL DEFAULT FALSE;
+          RAISE NOTICE 'Added is_email_verified column to companies';
+        END IF;
+
+        IF NOT EXISTS (SELECT 1 FROM information_schema.columns
+                       WHERE table_name='companies' AND column_name='otp_code') THEN
+          ALTER TABLE companies ADD COLUMN otp_code VARCHAR(6);
+          RAISE NOTICE 'Added otp_code column to companies';
+        END IF;
+
+        IF NOT EXISTS (SELECT 1 FROM information_schema.columns
+                       WHERE table_name='companies' AND column_name='otp_expiry') THEN
+          ALTER TABLE companies ADD COLUMN otp_expiry TIMESTAMP;
+          RAISE NOTICE 'Added otp_expiry column to companies';
+        END IF;
+
+        IF NOT EXISTS (SELECT 1 FROM information_schema.columns
+                       WHERE table_name='companies' AND column_name='otp_attempts') THEN
+          ALTER TABLE companies ADD COLUMN otp_attempts INTEGER NOT NULL DEFAULT 0;
+          RAISE NOTICE 'Added otp_attempts column to companies';
+        END IF;
       END $$;
+    `);
+
+    // Mark existing approved companies as email verified (backward compatibility)
+    await sequelize.query(`
+      UPDATE companies
+      SET is_email_verified = TRUE
+      WHERE is_email_verified = FALSE AND status = 'approved';
     `);
 
     // Add comments
@@ -105,6 +182,10 @@ async function runMigration() {
       COMMENT ON COLUMN companies.password_hash IS 'Temporary password hash until company is approved';
       COMMENT ON COLUMN companies.user_id IS 'User account for company login (created when approved)';
       COMMENT ON COLUMN companies.status IS 'pending, approved, rejected';
+      COMMENT ON COLUMN companies.is_email_verified IS '2FA: Whether the company has verified their email with OTP during registration';
+      COMMENT ON COLUMN companies.otp_code IS '2FA: 6-digit OTP code for email verification during registration';
+      COMMENT ON COLUMN companies.otp_expiry IS '2FA: Expiry time for the OTP code';
+      COMMENT ON COLUMN companies.otp_attempts IS '2FA: Number of failed OTP verification attempts during registration';
     `);
 
     console.log('✅ companies table created/verified');

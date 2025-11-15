@@ -295,8 +295,8 @@ class AdminController {
   async createAdmin(req, res) {
     try {
       console.log('[AdminController] createAdmin - Request body:', req.body);
-      
-      const { email, password, name } = req.body;
+
+      const { email, password, name, whatsappNumber } = req.body;
 
       // Validate input
       if (!email) {
@@ -318,21 +318,23 @@ class AdminController {
       // Comment this out if you want to allow any email for admin
       if (!email.endsWith('@admin.com')) {
         console.log('[AdminController] createAdmin - Invalid email domain:', email);
-        return res.status(400).json({ 
-          message: "Admin email must end with '@admin.com'. Example: admin@admin.com" 
+        return res.status(400).json({
+          message: "Admin email must end with '@admin.com'. Example: admin@admin.com"
         });
       }
 
       console.log('[AdminController] createAdmin - Attempting to create admin:', email);
 
-      const user = await authService.registerUser(email, password, User.ROLES.ADMIN);
+      // Use registerUserWith2FA so new admin must verify their email
+      const user = await authService.registerUserWith2FA(email, password, User.ROLES.ADMIN, null, whatsappNumber);
 
       if (!user) {
         console.log('[AdminController] createAdmin - Email already exists:', email);
         return res.status(400).json({ message: 'Email already exists' });
       }
 
-      console.log('[AdminController] createAdmin - Admin created successfully:', user.id);
+      console.log('[AdminController] createAdmin - Admin created (email verification required):', user.id);
+      console.log('[AdminController] createAdmin - OTP sent to:', email);
 
       return res.status(200).json({
         id: user.id.toString(),
@@ -346,7 +348,7 @@ class AdminController {
     } catch (error) {
       console.error('[AdminController] createAdmin - Error:', error);
       console.error('[AdminController] createAdmin - Stack:', error.stack);
-      return res.status(500).json({ 
+      return res.status(500).json({
         message: `An error occurred: ${error.message}`,
         details: process.env.NODE_ENV === 'development' ? error.stack : undefined
       });

@@ -42,6 +42,32 @@ const User = sequelize.define('User', {
     defaultValue: true,
     field: 'is_active'
   },
+  isEmailVerified: {
+    type: DataTypes.BOOLEAN,
+    allowNull: false,
+    defaultValue: false,
+    field: 'is_email_verified',
+    comment: '2FA: Whether the user has verified their email with OTP'
+  },
+  otpCode: {
+    type: DataTypes.STRING(6),
+    allowNull: true,
+    field: 'otp_code',
+    comment: '2FA: 6-digit OTP code for email verification'
+  },
+  otpExpiry: {
+    type: DataTypes.DATE,
+    allowNull: true,
+    field: 'otp_expiry',
+    comment: '2FA: Expiry time for the OTP code'
+  },
+  otpAttempts: {
+    type: DataTypes.INTEGER,
+    allowNull: false,
+    defaultValue: 0,
+    field: 'otp_attempts',
+    comment: '2FA: Number of failed OTP verification attempts'
+  },
   createdAt: {
     type: DataTypes.DATE,
     defaultValue: DataTypes.NOW,

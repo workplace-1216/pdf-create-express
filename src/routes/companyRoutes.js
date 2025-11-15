@@ -5,6 +5,8 @@ const { authenticate, authorize } = require('../middleware/auth');
 
 // Public routes (NO authentication required)
 router.post('/register', companyController.registerCompany);
+router.post('/verify-otp', companyController.verifyCompanyOTP);
+router.post('/resend-otp', companyController.resendCompanyOTP);
 router.get('/approved', companyController.getApprovedCompanies);
 
 // Protected routes (authentication required)

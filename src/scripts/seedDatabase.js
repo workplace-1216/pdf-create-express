@@ -28,18 +28,39 @@ async function seedDatabase() {
     
     if (existingAdmin) {
       console.log(`⚠️  Admin user already exists: ${adminEmail}`);
+
+      // Auto-verify existing admin if not verified
+      if (!existingAdmin.isEmailVerified) {
+        await existingAdmin.update({
+          isEmailVerified: true,
+          otpCode: null,
+          otpExpiry: null,
+          otpAttempts: 0
+        });
+        console.log('✅ Existing admin email auto-verified');
+      }
     } else {
       const adminUser = await authService.registerUser(
         adminEmail,
         adminPassword,
         User.ROLES.ADMIN
       );
-      
+
       if (adminUser) {
-        console.log('✅ Admin user created successfully!');
+        // Auto-verify ONLY the initial seeded admin (for system setup)
+        // All other admins created later will require email verification
+        await adminUser.update({
+          isEmailVerified: true,
+          otpCode: null,
+          otpExpiry: null,
+          otpAttempts: 0
+        });
+
+        console.log('✅ Admin user created and auto-verified successfully!');
         console.log(`   Email: ${adminEmail}`);
         console.log(`   Password: ${adminPassword}`);
         console.log(`   Role: Admin`);
+        console.log('   ⚠️  Note: This is the only auto-verified admin. New admins will require email verification.');
       } else {
         console.log('❌ Failed to create admin user');
       }

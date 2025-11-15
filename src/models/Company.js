@@ -72,6 +72,32 @@ const Company = sequelize.define('Company', {
     field: 'rejection_reason',
     comment: 'Reason for rejection if status is rejected'
   },
+  isEmailVerified: {
+    type: DataTypes.BOOLEAN,
+    allowNull: false,
+    defaultValue: false,
+    field: 'is_email_verified',
+    comment: '2FA: Whether the company has verified their email with OTP during registration'
+  },
+  otpCode: {
+    type: DataTypes.STRING(6),
+    allowNull: true,
+    field: 'otp_code',
+    comment: '2FA: 6-digit OTP code for email verification during registration'
+  },
+  otpExpiry: {
+    type: DataTypes.DATE,
+    allowNull: true,
+    field: 'otp_expiry',
+    comment: '2FA: Expiry time for the OTP code'
+  },
+  otpAttempts: {
+    type: DataTypes.INTEGER,
+    allowNull: false,
+    defaultValue: 0,
+    field: 'otp_attempts',
+    comment: '2FA: Number of failed OTP verification attempts during registration'
+  },
   createdAt: {
     type: DataTypes.DATE,
     defaultValue: DataTypes.NOW,

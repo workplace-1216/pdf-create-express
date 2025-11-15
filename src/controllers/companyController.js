@@ -3,13 +3,18 @@ const authService = require('../services/authService');
 const bcrypt = require('bcryptjs');
 const { getCurrentUserId, getCurrentUserRole } = require('../utils/helpers');
 const { Op } = require('sequelize');
+const otpService = require('../services/otpService');
+const emailService = require('../services/emailService');
 
 class CompanyController {
   // Get all companies (for client selection during registration)
   async getApprovedCompanies(req, res) {
     try {
       const companies = await Company.findAll({
-        where: { status: Company.STATUS.APPROVED },
+        where: {
+          status: Company.STATUS.APPROVED,
+          isEmailVerified: true // Only show verified companies
+        },
         attributes: ['id', 'name', 'rfc', 'email'],
         order: [['name', 'ASC']]
       });
@@ -31,7 +36,10 @@ class CompanyController {
         include: [{
           model: Company,
           as: 'companies',
-          where: { status: Company.STATUS.APPROVED },
+          where: {
+            status: Company.STATUS.APPROVED,
+            isEmailVerified: true // Only show verified companies
+          },
           through: { attributes: [] }, // Exclude junction table attributes
           attributes: ['id', 'name', 'rfc', 'email']
         }]
@@ -44,6 +52,139 @@ class CompanyController {
       return res.status(200).json(user.companies || []);
     } catch (error) {
       console.error('Get client companies error:', error);
+      return res.status(500).json({ message: `An error occurred: ${error.message}` });
+    }
+  }
+
+  // Verify company email OTP
+  async verifyCompanyOTP(req, res) {
+    try {
+      const { email, otpCode } = req.body;
+
+      if (!email || !otpCode) {
+        return res.status(400).json({ message: 'Email and OTP code are required' });
+      }
+
+      console.log(`[CompanyController] 🔐 Verifying OTP for company ${email}...`);
+
+      // Find company by email
+      const company = await Company.findOne({ where: { email } });
+
+      if (!company) {
+        return res.status(404).json({ message: 'Company not found' });
+      }
+
+      // Check if already verified
+      if (company.isEmailVerified) {
+        return res.status(400).json({ message: 'Email already verified' });
+      }
+
+      // Check for too many failed attempts
+      if (otpService.isLockedOut(company.otpAttempts)) {
+        return res.status(429).json({
+          message: 'Too many failed attempts. Please request a new verification code.'
+        });
+      }
+
+      // Verify OTP
+      const verification = otpService.verifyOTP(otpCode, company.otpCode, company.otpExpiry);
+
+      if (!verification.valid) {
+        // Increment failed attempts
+        await company.update({ otpAttempts: company.otpAttempts + 1 });
+        console.log(`[CompanyController] ❌ OTP verification failed: ${verification.reason}`);
+        return res.status(400).json({ message: verification.reason });
+      }
+
+      // Mark email as verified
+      await company.update({
+        isEmailVerified: true,
+        otpCode: null,
+        otpExpiry: null,
+        otpAttempts: 0
+      });
+
+      console.log(`[CompanyController] ✅ Company email verified: ${email}`);
+      console.log(`[CompanyController] Company can now wait for admin approval`);
+
+      // NOW create admin notification (only after email is verified)
+      await AdminNotification.create({
+        notificationType: AdminNotification.TYPES.NEW_COMPANY,
+        relatedCompanyId: company.id,
+        message: `Nueva empresa registrada: ${company.name} (${company.rfc})`,
+        isRead: false,
+        createdAt: new Date()
+      });
+
+      console.log(`[CompanyController] 📢 Admin notification created for verified company`);
+
+      return res.status(200).json({
+        success: true,
+        message: 'Email verified successfully. Your company registration is now pending admin approval.',
+        companyId: company.id
+      });
+    } catch (error) {
+      console.error('Verify company OTP error:', error);
+      return res.status(500).json({ message: `An error occurred: ${error.message}` });
+    }
+  }
+
+  // Resend company OTP
+  async resendCompanyOTP(req, res) {
+    try {
+      const { email } = req.body;
+
+      if (!email) {
+        return res.status(400).json({ message: 'Email is required' });
+      }
+
+      console.log(`[CompanyController] 📧 Resending OTP to company ${email}...`);
+
+      // Find company by email
+      const company = await Company.findOne({ where: { email } });
+
+      if (!company) {
+        return res.status(404).json({ message: 'Company not found' });
+      }
+
+      // Check if already verified
+      if (company.isEmailVerified) {
+        return res.status(400).json({ message: 'Email already verified' });
+      }
+
+      // Generate new OTP
+      const otpCode = otpService.generateOTP();
+      const otpExpiry = otpService.getOTPExpiry();
+
+      // Update company with new OTP and reset attempts
+      await company.update({
+        otpCode,
+        otpExpiry,
+        otpAttempts: 0
+      });
+
+      console.log(`[CompanyController] 🔄 New OTP generated for ${email}: ${otpCode}`);
+
+      // Send OTP email
+      const emailResult = await emailService.sendOTPEmail({
+        toEmail: email,
+        otpCode,
+        userType: 'company'
+      });
+
+      if (!emailResult.success) {
+        console.error(`[CompanyController] ⚠️ Failed to send OTP email to ${email}:`, emailResult.error);
+        return res.status(500).json({ message: 'Failed to send verification email' });
+      }
+
+      console.log(`[CompanyController] ✅ OTP resent successfully to ${email}`);
+
+      return res.status(200).json({
+        success: true,
+        message: 'A new verification code has been sent to your email.'
+      });
+    } catch (error) {
+      console.error('Resend company OTP error:', error);
       return res.status(500).json({ message: `An error occurred: ${error.message}` });
     }
   }
@@ -71,15 +212,19 @@ class CompanyController {
       });
 
       if (existing) {
-        return res.status(400).json({ 
-          message: existing.rfc === rfc ? 'Company with this RFC already exists' : 'Company with this email already exists' 
+        return res.status(400).json({
+          message: existing.rfc === rfc ? 'Company with this RFC already exists' : 'Company with this email already exists'
         });
       }
 
       // Hash password for later use when approved
       const passwordHash = await bcrypt.hash(password, 10);
 
-      // Create company with pending status
+      // Generate OTP for email verification (2FA)
+      const otpCode = otpService.generateOTP();
+      const otpExpiry = otpService.getOTPExpiry();
+
+      // Create company with pending status and email NOT verified
       const company = await Company.create({
         name,
         rfc,
@@ -87,19 +232,28 @@ class CompanyController {
         whatsappNumber,
         passwordHash,
         status: Company.STATUS.PENDING,
+        isEmailVerified: false,
+        otpCode,
+        otpExpiry,
+        otpAttempts: 0,
         createdAt: new Date()
       });
 
-      console.log(`[CompanyController] ✅ Company registered: ${name} (${rfc}) - Status: PENDING`);
+      console.log(`[CompanyController] ✅ Company registered (pending email verification): ${name} (${rfc})`);
+      console.log(`[CompanyController] 📧 OTP generated: ${otpCode}`);
 
-      // Create admin notification for new company registration
-      await AdminNotification.create({
-        notificationType: AdminNotification.TYPES.NEW_COMPANY,
-        relatedCompanyId: company.id,
-        message: `Nueva empresa registrada: ${name} (${rfc})`,
-        isRead: false,
-        createdAt: new Date()
+      // Send OTP email
+      const emailResult = await emailService.sendOTPEmail({
+        toEmail: email,
+        otpCode,
+        userType: 'company'
       });
+
+      if (!emailResult.success) {
+        console.error(`[CompanyController] ⚠️ Failed to send OTP email to ${email}:`, emailResult.error);
+      }
+
+      // NOTE: Admin notification will be created AFTER email verification (in verifyCompanyOTP)
 
       return res.status(201).json({
         id: company.id,
@@ -107,7 +261,8 @@ class CompanyController {
         rfc: company.rfc,
         email: company.email,
         status: company.status,
-        message: 'Company registered successfully. Waiting for admin approval.'
+        message: 'Company registration initiated. Please check your email for the verification code.',
+        requiresEmailVerification: true
       });
     } catch (error) {
       console.error('Register company error:', error);
@@ -122,7 +277,9 @@ class CompanyController {
       const page = parseInt(req.query.page) || 1;
       const pageSize = parseInt(req.query.pageSize) || 10;
 
-      const where = {};
+      const where = {
+        isEmailVerified: true // Only show companies that have verified their email
+      };
       if (status && status !== 'All') {
         where.status = status.toLowerCase();
       }
@@ -192,6 +349,13 @@ class CompanyController {
         return res.status(404).json({ message: 'Company not found' });
       }
 
+      // Check if company has verified their email
+      if (!company.isEmailVerified) {
+        return res.status(400).json({
+          message: 'Company must verify their email before approval. Email verification is pending.'
+        });
+      }
+
       if (company.status !== Company.STATUS.PENDING) {
         return res.status(400).json({ message: 'Company is not pending approval' });
       }
@@ -212,7 +376,11 @@ class CompanyController {
             role: User.ROLES.COMPANY,
             rfc: company.rfc,  // ✅ Copy RFC from company to user
             whatsappNumber: company.whatsappNumber,  // ✅ Copy WhatsApp from company to user
-            isActive: true
+            isActive: true,
+            isEmailVerified: true, // ✅ Email already verified during company registration
+            otpCode: null,
+            otpExpiry: null,
+            otpAttempts: 0
           });
           console.log(`[CompanyController] ✅ User created with ID: ${user.id}, Role: ${user.role}, Role Name: ${User.getRoleName(user.role)}, RFC: ${company.rfc}, WhatsApp: ${company.whatsappNumber}`);
         } else {
@@ -226,8 +394,16 @@ class CompanyController {
             company.whatsappNumber  // ✅ Pass WhatsApp to authService
           );
           console.log(`[CompanyController] ✅ User created via authService, ID: ${user.id}, RFC: ${company.rfc}, WhatsApp: ${company.whatsappNumber}`);
+
+          // Mark email as verified (since company already verified their email)
+          await user.update({
+            isEmailVerified: true,
+            otpCode: null,
+            otpExpiry: null,
+            otpAttempts: 0
+          });
         }
-        
+
         userId = user.id;
         console.log(`[CompanyController] ✅ User account created for company: ${company.email}, userId: ${userId}, RFC: ${company.rfc}`);
       } else {
