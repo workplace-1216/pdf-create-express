@@ -162,10 +162,17 @@ class DocumentController {
 
       console.log(`[DocumentController] 📊 Processing completed in ${processingTimeMs}ms`);
 
+      // Return success response (no automatic download)
+      console.log('[DocumentController] ✅ Upload and processing completed successfully');
+      console.log(`[DocumentController] 📄 Processed document available for download: ${processedFileName}`);
+
       return res.status(200).json({
-        documentId: document.id,
-        status: 'Processed',
-        message: 'Document uploaded and processed successfully'
+        success: true,
+        message: 'Document uploaded and processed successfully',
+        documentId: processedDocument.id,
+        fileName: processedFileName,
+        fileSize: processingResult.finalPdfBytes.length,
+        processingTimeMs: processingTimeMs
       });
     } catch (error) {
       console.error('========================================');

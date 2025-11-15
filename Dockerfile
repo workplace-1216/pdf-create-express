@@ -2,11 +2,12 @@ FROM node:25-bookworm
 
 WORKDIR /app
 
-# Install Python 3.11 and build dependencies
+# Install Python 3.11, Ghostscript, and build dependencies
 RUN apt-get update && apt-get install -y \
     python3.11 \
     python3.11-venv \
     python3-pip \
+    ghostscript \
     build-essential \
     pkg-config \
     libcairo2-dev \
