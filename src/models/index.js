@@ -39,6 +39,10 @@ Company.belongsTo(User, { foreignKey: 'approvedByAdminId', as: 'approvedByAdmin'
 User.belongsToMany(Company, { through: ClientCompany, foreignKey: 'clientUserId', as: 'companies' });
 Company.belongsToMany(User, { through: ClientCompany, foreignKey: 'companyId', as: 'clients' });
 
+// ClientCompany direct associations (needed for include queries)
+ClientCompany.belongsTo(User, { foreignKey: 'clientUserId', as: 'client' });
+ClientCompany.belongsTo(Company, { foreignKey: 'companyId', as: 'company' });
+
 // Document-Company associations
 DocumentProcessed.belongsTo(Company, { foreignKey: 'sentToCompanyId', as: 'sentToCompany' });
 Company.hasMany(DocumentProcessed, { foreignKey: 'sentToCompanyId', as: 'receivedDocuments' });
