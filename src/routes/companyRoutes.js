@@ -21,6 +21,12 @@ router.delete('/my-companies/:companyId', authorize('Client'), companyController
 router.get('/received-documents', authorize('Company'), companyController.getReceivedDocuments);
 router.delete('/documents/:id', authorize('Company'), companyController.deleteReceivedDocument);
 
+// Company: Manage users
+router.get('/users', authorize('Company'), companyController.getCompanyUsers);
+router.post('/users', authorize('Company'), companyController.createCompanyUser);
+router.put('/users/:id', authorize('Company'), companyController.updateCompanyUser);
+router.delete('/users/:id', authorize('Company'), companyController.deleteCompanyUser);
+
 // Admin: Manage all companies
 router.get('/all', authorize('Admin'), companyController.getAllCompanies);
 router.post('/:id/approve', authorize('Admin'), companyController.approveCompany);

@@ -27,6 +27,10 @@ class CompanyController {
     this.approveCompany = this.approveCompany.bind(this);
     this.rejectCompany = this.rejectCompany.bind(this);
     this.deleteCompany = this.deleteCompany.bind(this);
+    this.getCompanyUsers = this.getCompanyUsers.bind(this);
+    this.createCompanyUser = this.createCompanyUser.bind(this);
+    this.updateCompanyUser = this.updateCompanyUser.bind(this);
+    this.deleteCompanyUser = this.deleteCompanyUser.bind(this);
   }
   // Get all companies (for client selection during registration)
   async getApprovedCompanies(req, res) {
@@ -880,6 +884,202 @@ class CompanyController {
       });
     } catch (error) {
       console.error('[DeleteReceivedDocument] ❌ Error:', error);
+      return res.status(500).json({ message: `An error occurred: ${error.message}` });
+    }
+  }
+
+  // Company: Get all users for this company
+  async getCompanyUsers(req, res) {
+    try {
+      const userId = getCurrentUserId(req);
+      const userRole = getCurrentUserRole(req);
+      const page = parseInt(req.query.page) || 1;
+      const pageSize = 5; // Fixed to 5 per page
+
+      console.log(`[GetCompanyUsers] User ID: ${userId}, Role: ${userRole}, Page: ${page}`);
+
+      if (userRole !== 'Company') {
+        return res.status(403).json({ message: 'Forbidden' });
+      }
+
+      // Get company for this user
+      const company = await Company.findOne({ where: { userId } });
+
+      if (!company) {
+        return res.status(404).json({ message: 'Company not found for this user' });
+      }
+
+      console.log(`[GetCompanyUsers] Company: ${company.name} (ID: ${company.id})`);
+
+      // Get clients associated with this company via client_companies table
+      const { count, rows: clientCompanies } = await ClientCompany.findAndCountAll({
+        where: { companyId: company.id },
+        include: [{
+          model: User,
+          as: 'client',
+          where: { role: User.ROLES.CLIENT },
+          attributes: ['id', 'email', 'rfc', 'whatsappNumber', 'isActive', 'createdAt']
+        }],
+        limit: pageSize,
+        offset: (page - 1) * pageSize,
+        order: [['createdAt', 'DESC']]
+      });
+
+      console.log(`[GetCompanyUsers] Found ${count} clients for company ${company.id}`);
+
+      // Map to user objects
+      const users = clientCompanies.map(cc => ({
+        id: cc.client.id,
+        name: cc.client.email.split('@')[0], // Use email username as name
+        email: cc.client.email,
+        role: 'client',
+        status: cc.client.isActive ? 'active' : 'inactive',
+        rfc: cc.client.rfc,
+        whatsapp: cc.client.whatsappNumber,
+        createdAt: cc.client.createdAt
+      }));
+
+      return res.status(200).json({
+        users,
+        totalCount: count,
+        page,
+        pageSize,
+        totalPages: Math.ceil(count / pageSize)
+      });
+    } catch (error) {
+      console.error('[GetCompanyUsers] Error:', error);
+      return res.status(500).json({ message: `An error occurred: ${error.message}` });
+    }
+  }
+
+  // Company: Create a new user for this company
+  async createCompanyUser(req, res) {
+    try {
+      const userId = getCurrentUserId(req);
+      const userRole = getCurrentUserRole(req);
+      const { name, email, role, status } = req.body;
+
+      console.log(`[CreateCompanyUser] User ID: ${userId}, Role: ${userRole}`);
+
+      if (userRole !== 'Company') {
+        return res.status(403).json({ message: 'Forbidden' });
+      }
+
+      // Get company for this user
+      const company = await Company.findOne({ where: { userId } });
+
+      if (!company) {
+        return res.status(404).json({ message: 'Company not found for this user' });
+      }
+
+      // Validate required fields
+      if (!name || !email || !role || !status) {
+        return res.status(400).json({ message: 'Name, email, role, and status are required' });
+      }
+
+      // Check if user with this email already exists
+      const existingUser = await User.findOne({ where: { email } });
+      if (existingUser) {
+        return res.status(400).json({ message: 'User with this email already exists' });
+      }
+
+      // For now, return a message that multi-user support is not yet implemented
+      return res.status(501).json({
+        message: 'Multi-user support for companies is not yet implemented. Only the main company account is currently supported.'
+      });
+    } catch (error) {
+      console.error('[CreateCompanyUser] Error:', error);
+      return res.status(500).json({ message: `An error occurred: ${error.message}` });
+    }
+  }
+
+  // Company: Update a user
+  async updateCompanyUser(req, res) {
+    try {
+      const userId = getCurrentUserId(req);
+      const userRole = getCurrentUserRole(req);
+      const targetUserId = parseInt(req.params.id);
+      const { name, email, role, status } = req.body;
+
+      console.log(`[UpdateCompanyUser] User ID: ${userId}, Role: ${userRole}, Target User: ${targetUserId}`);
+
+      if (userRole !== 'Company') {
+        return res.status(403).json({ message: 'Forbidden' });
+      }
+
+      // Get company for this user
+      const company = await Company.findOne({ where: { userId } });
+
+      if (!company) {
+        return res.status(404).json({ message: 'Company not found for this user' });
+      }
+
+      // For now, only allow updating the main company account
+      if (targetUserId !== userId) {
+        return res.status(403).json({ message: 'You can only update your own account' });
+      }
+
+      // Update company name if changed
+      if (name && name !== company.name) {
+        await company.update({ name });
+      }
+
+      // Update user email if changed
+      if (email && email !== company.email) {
+        const user = await User.findByPk(userId);
+        if (user) {
+          await user.update({ email });
+          await company.update({ email });
+        }
+      }
+
+      return res.status(200).json({
+        message: 'User updated successfully',
+        user: {
+          id: userId,
+          name: company.name,
+          email: company.email,
+          role: 'admin',
+          status: 'active'
+        }
+      });
+    } catch (error) {
+      console.error('[UpdateCompanyUser] Error:', error);
+      return res.status(500).json({ message: `An error occurred: ${error.message}` });
+    }
+  }
+
+  // Company: Delete a user
+  async deleteCompanyUser(req, res) {
+    try {
+      const userId = getCurrentUserId(req);
+      const userRole = getCurrentUserRole(req);
+      const targetUserId = parseInt(req.params.id);
+
+      console.log(`[DeleteCompanyUser] User ID: ${userId}, Role: ${userRole}, Target User: ${targetUserId}`);
+
+      if (userRole !== 'Company') {
+        return res.status(403).json({ message: 'Forbidden' });
+      }
+
+      // Get company for this user
+      const company = await Company.findOne({ where: { userId } });
+
+      if (!company) {
+        return res.status(404).json({ message: 'Company not found for this user' });
+      }
+
+      // Don't allow deleting the main company account
+      if (targetUserId === userId) {
+        return res.status(400).json({ message: 'You cannot delete your own account' });
+      }
+
+      // For now, return not implemented since we only support one user per company
+      return res.status(501).json({
+        message: 'Multi-user support for companies is not yet implemented.'
+      });
+    } catch (error) {
+      console.error('[DeleteCompanyUser] Error:', error);
       return res.status(500).json({ message: `An error occurred: ${error.message}` });
     }
   }
