@@ -81,21 +81,15 @@ class AuthController {
       console.log(`[AuthController] ✅ Client registered (pending email verification): ${email}`);
       console.log(`[AuthController] 📧 OTP sent to ${email}`);
 
-      // Create admin notification for new client registration
-      await AdminNotification.create({
-        notificationType: AdminNotification.TYPES.NEW_USER,
-        relatedUserId: user.id,
-        message: `Nuevo cliente registrado (pendiente verificación): ${user.email}`,
-        isRead: false,
-        createdAt: new Date()
-      });
+      // NOTE: Admin notification will be created AFTER email verification (in verifyOTP)
 
       return res.status(200).json({
-        userId: user.id,
+        userId: 0, // Not created in DB yet
         email: user.email,
         role: User.getRoleName(user.role),
         message: 'Registration successful. Please check your email for the verification code.',
-        requiresEmailVerification: true
+        requiresEmailVerification: true,
+        createdAt: new Date().toISOString()
       });
     } catch (error) {
       console.error('Register error:', error);
@@ -131,8 +125,10 @@ class AuthController {
 
       return res.status(200).json({
         success: true,
-        message: 'Email verified successfully. You can now log in.',
-        email: email
+        message: result.message,
+        email: email,
+        token: result.token || undefined,
+        role: result.role || undefined
       });
     } catch (error) {
       console.error('Verify OTP error:', error);

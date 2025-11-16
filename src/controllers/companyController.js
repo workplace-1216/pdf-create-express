@@ -7,6 +7,27 @@ const otpService = require('../services/otpService');
 const emailService = require('../services/emailService');
 
 class CompanyController {
+  constructor() {
+    // Store pending company registrations (not yet in database)
+    // Map: email -> { name, rfc, email, whatsappNumber, passwordHash, otpCode, otpExpiry, otpAttempts }
+    this.pendingCompanies = new Map();
+    console.log('[CompanyController] Constructor called, pendingCompanies initialized');
+
+    // Bind methods to preserve 'this' context when called by Express routes
+    this.registerCompany = this.registerCompany.bind(this);
+    this.verifyCompanyOTP = this.verifyCompanyOTP.bind(this);
+    this.resendCompanyOTP = this.resendCompanyOTP.bind(this);
+    this.getApprovedCompanies = this.getApprovedCompanies.bind(this);
+    this.getClientCompanies = this.getClientCompanies.bind(this);
+    this.addCompanyToClient = this.addCompanyToClient.bind(this);
+    this.removeCompanyFromClient = this.removeCompanyFromClient.bind(this);
+    this.getReceivedDocuments = this.getReceivedDocuments.bind(this);
+    this.deleteReceivedDocument = this.deleteReceivedDocument.bind(this);
+    this.getAllCompanies = this.getAllCompanies.bind(this);
+    this.approveCompany = this.approveCompany.bind(this);
+    this.rejectCompany = this.rejectCompany.bind(this);
+    this.deleteCompany = this.deleteCompany.bind(this);
+  }
   // Get all companies (for client selection during registration)
   async getApprovedCompanies(req, res) {
     try {
@@ -67,11 +88,76 @@ class CompanyController {
 
       console.log(`[CompanyController] 🔐 Verifying OTP for company ${email}...`);
 
-      // Find company by email
+      // Check if this is a pending registration (not in DB yet)
+      if (this.pendingCompanies.has(email)) {
+        console.log(`[CompanyController] Found pending company registration for ${email}`);
+        const pendingData = this.pendingCompanies.get(email);
+
+        // Check for too many failed attempts
+        if (otpService.isLockedOut(pendingData.otpAttempts)) {
+          return res.status(429).json({
+            message: 'Too many failed attempts. Please request a new verification code.'
+          });
+        }
+
+        // Verify OTP
+        const verification = otpService.verifyOTP(otpCode, pendingData.otpCode, pendingData.otpExpiry);
+
+        if (!verification.valid) {
+          // Increment failed attempts
+          pendingData.otpAttempts += 1;
+          this.pendingCompanies.set(email, pendingData);
+          console.log(`[CompanyController] ❌ OTP verification failed: ${verification.reason}`);
+          return res.status(400).json({ message: verification.reason });
+        }
+
+        // OTP is valid! Create company in database NOW
+        console.log(`[CompanyController] ✅ OTP verified! Creating company in database: ${email}`);
+
+        const company = await Company.create({
+          name: pendingData.name,
+          rfc: pendingData.rfc,
+          email: pendingData.email,
+          whatsappNumber: pendingData.whatsappNumber,
+          passwordHash: pendingData.passwordHash,
+          status: Company.STATUS.PENDING,
+          isEmailVerified: true,
+          otpCode: null,
+          otpExpiry: null,
+          otpAttempts: 0,
+          createdAt: new Date()
+        });
+
+        // Remove from pending registrations
+        this.pendingCompanies.delete(email);
+
+        console.log(`[CompanyController] ✅ Company created in database with ID: ${company.id}`);
+        console.log(`[CompanyController] Company can now wait for admin approval`);
+
+        // NOW create admin notification (only after email is verified)
+        await AdminNotification.create({
+          notificationType: AdminNotification.TYPES.NEW_COMPANY,
+          relatedCompanyId: company.id,
+          message: `Nueva empresa registrada: ${company.name} (${company.rfc})`,
+          isRead: false,
+          createdAt: new Date()
+        });
+
+        console.log(`[CompanyController] 📢 Admin notification created for verified company`);
+
+        return res.status(200).json({
+          success: true,
+          message: 'Email verified successfully. Your company registration is now pending admin approval.',
+          companyId: company.id
+        });
+      }
+
+      // Check if company exists in database (for existing companies who need to verify)
       const company = await Company.findOne({ where: { email } });
 
       if (!company) {
-        return res.status(404).json({ message: 'Company not found' });
+        console.log(`[CompanyController] ❌ Company not found in pending registrations or database: ${email}`);
+        return res.status(404).json({ message: 'Company not found. Please register first.' });
       }
 
       // Check if already verified
@@ -105,22 +191,10 @@ class CompanyController {
       });
 
       console.log(`[CompanyController] ✅ Company email verified: ${email}`);
-      console.log(`[CompanyController] Company can now wait for admin approval`);
-
-      // NOW create admin notification (only after email is verified)
-      await AdminNotification.create({
-        notificationType: AdminNotification.TYPES.NEW_COMPANY,
-        relatedCompanyId: company.id,
-        message: `Nueva empresa registrada: ${company.name} (${company.rfc})`,
-        isRead: false,
-        createdAt: new Date()
-      });
-
-      console.log(`[CompanyController] 📢 Admin notification created for verified company`);
 
       return res.status(200).json({
         success: true,
-        message: 'Email verified successfully. Your company registration is now pending admin approval.',
+        message: 'Email verified successfully.',
         companyId: company.id
       });
     } catch (error) {
@@ -140,7 +214,44 @@ class CompanyController {
 
       console.log(`[CompanyController] 📧 Resending OTP to company ${email}...`);
 
-      // Find company by email
+      // Check if this is a pending registration
+      if (this.pendingCompanies.has(email)) {
+        console.log(`[CompanyController] Resending OTP for pending company: ${email}`);
+        const pendingData = this.pendingCompanies.get(email);
+
+        // Generate new OTP
+        const otpCode = otpService.generateOTP();
+        const otpExpiry = otpService.getOTPExpiry();
+
+        // Update pending data
+        pendingData.otpCode = otpCode;
+        pendingData.otpExpiry = otpExpiry;
+        pendingData.otpAttempts = 0;
+        this.pendingCompanies.set(email, pendingData);
+
+        console.log(`[CompanyController] 🔄 New OTP generated for pending company ${email}: ${otpCode}`);
+
+        // Send OTP email
+        const emailResult = await emailService.sendOTPEmail({
+          toEmail: email,
+          otpCode,
+          userType: 'company'
+        });
+
+        if (!emailResult.success) {
+          console.error(`[CompanyController] ⚠️ Failed to send OTP email to ${email}:`, emailResult.error);
+          return res.status(500).json({ message: 'Failed to send verification email' });
+        }
+
+        console.log(`[CompanyController] ✅ OTP resent successfully to ${email}`);
+
+        return res.status(200).json({
+          success: true,
+          message: 'A new verification code has been sent to your email.'
+        });
+      }
+
+      // Find company by email in database
       const company = await Company.findOne({ where: { email } });
 
       if (!company) {
@@ -192,6 +303,9 @@ class CompanyController {
   // Register new company
   async registerCompany(req, res) {
     try {
+      console.log('[CompanyController] registerCompany called, this:', typeof this);
+      console.log('[CompanyController] this.pendingCompanies:', this.pendingCompanies);
+
       const { name, rfc, email, whatsappNumber, password } = req.body;
 
       // Validate required fields
@@ -204,7 +318,7 @@ class CompanyController {
         return res.status(400).json({ message: 'Password must be at least 6 characters' });
       }
 
-      // Check if company with RFC or email already exists
+      // Check if company with RFC or email already exists in database
       const existing = await Company.findOne({
         where: {
           [Op.or]: [{ rfc }, { email }]
@@ -217,6 +331,12 @@ class CompanyController {
         });
       }
 
+      // Check if already pending
+      if (this.pendingCompanies.has(email)) {
+        console.log(`[CompanyController] ⚠️ Company registration already pending for ${email}`);
+        // Allow re-registration to update OTP
+      }
+
       // Hash password for later use when approved
       const passwordHash = await bcrypt.hash(password, 10);
 
@@ -224,22 +344,20 @@ class CompanyController {
       const otpCode = otpService.generateOTP();
       const otpExpiry = otpService.getOTPExpiry();
 
-      // Create company with pending status and email NOT verified
-      const company = await Company.create({
+      // Store in pending registrations (NOT in database yet)
+      this.pendingCompanies.set(email, {
         name,
         rfc,
         email,
         whatsappNumber,
         passwordHash,
-        status: Company.STATUS.PENDING,
-        isEmailVerified: false,
         otpCode,
         otpExpiry,
         otpAttempts: 0,
         createdAt: new Date()
       });
 
-      console.log(`[CompanyController] ✅ Company registered (pending email verification): ${name} (${rfc})`);
+      console.log(`[CompanyController] ✅ Pending company registration stored (NOT in DB): ${name} (${rfc})`);
       console.log(`[CompanyController] 📧 OTP generated: ${otpCode}`);
 
       // Send OTP email
@@ -253,14 +371,14 @@ class CompanyController {
         console.error(`[CompanyController] ⚠️ Failed to send OTP email to ${email}:`, emailResult.error);
       }
 
-      // NOTE: Admin notification will be created AFTER email verification (in verifyCompanyOTP)
+      // NOTE: Company will be created in database AFTER email verification (in verifyCompanyOTP)
 
       return res.status(201).json({
-        id: company.id,
-        name: company.name,
-        rfc: company.rfc,
-        email: company.email,
-        status: company.status,
+        id: 0, // Not created yet
+        name: name,
+        rfc: rfc,
+        email: email,
+        status: 'pending',
         message: 'Company registration initiated. Please check your email for the verification code.',
         requiresEmailVerification: true
       });

@@ -1,6 +1,6 @@
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
-const { User, Company } = require('../models');
+const { User, Company, AdminNotification } = require('../models');
 const otpService = require('./otpService');
 const emailService = require('./emailService');
 
@@ -10,6 +10,23 @@ class AuthService {
     this.jwtIssuer = process.env.JWT_ISSUER || 'PdfPortal';
     this.jwtAudience = process.env.JWT_AUDIENCE || 'PdfPortalUsers';
     this.jwtExpiryMinutes = process.env.JWT_EXPIRY_MINUTES || 60;
+
+    // Store pending registrations (not yet in database)
+    // Map: email -> { passwordHash, role, rfc, whatsappNumber, otpCode, otpExpiry, otpAttempts }
+    this.pendingRegistrations = new Map();
+
+    // Bind methods to preserve 'this' context
+    this.hashPassword = this.hashPassword.bind(this);
+    this.verifyPassword = this.verifyPassword.bind(this);
+    this.generateToken = this.generateToken.bind(this);
+    this.validateUser = this.validateUser.bind(this);
+    this.registerUser = this.registerUser.bind(this);
+    this.login = this.login.bind(this);
+    this.verifyLoginOTP = this.verifyLoginOTP.bind(this);
+    this.getUserById = this.getUserById.bind(this);
+    this.registerUserWith2FA = this.registerUserWith2FA.bind(this);
+    this.verifyEmailOTP = this.verifyEmailOTP.bind(this);
+    this.resendOTP = this.resendOTP.bind(this);
   }
 
   async hashPassword(password) {
@@ -159,53 +176,39 @@ class AuthService {
       throw new Error('Invalid email or password');
     }
 
-    // ✅ GENERATE OTP FOR ADMIN AND COMPANY LOGIN (2FA)
-    // Clients only verify email once during registration, no OTP on login
-    if (user.role === User.ROLES.ADMIN || user.role === User.ROLES.COMPANY) {
-      const otpService = require('./otpService');
-      const emailService = require('./emailService');
+    // ✅ GENERATE OTP FOR EVERY LOGIN (2FA for ALL users: Admin, Company, Client)
+    const otpService = require('./otpService');
+    const emailService = require('./emailService');
 
-      const otpCode = otpService.generateOTP();
-      const otpExpiry = otpService.getOTPExpiry();
+    const otpCode = otpService.generateOTP();
+    const otpExpiry = otpService.getOTPExpiry();
 
-      // Save OTP to user
-      await user.update({
-        otpCode,
-        otpExpiry,
-        otpAttempts: 0
-      });
+    // Save OTP to user
+    await user.update({
+      otpCode,
+      otpExpiry,
+      otpAttempts: 0
+    });
 
-      console.log(`[AuthService] 🔐 Login OTP generated for ${user.email}: ${otpCode}`);
+    console.log(`[AuthService] 🔐 Login OTP generated for ${user.email}: ${otpCode}`);
 
-      // Send OTP email
-      const userType = user.role === User.ROLES.ADMIN ? 'admin' : 'company';
-      const emailResult = await emailService.sendOTPEmail({
-        toEmail: user.email,
-        otpCode,
-        userType
-      });
+    // Send OTP email
+    const userType = user.role === User.ROLES.ADMIN ? 'admin' : (user.role === User.ROLES.COMPANY ? 'company' : 'client');
+    const emailResult = await emailService.sendOTPEmail({
+      toEmail: user.email,
+      otpCode,
+      userType
+    });
 
-      if (!emailResult.success) {
-        console.error(`[AuthService] ⚠️ Failed to send login OTP email to ${user.email}:`, emailResult.error);
-      }
-
-      // Don't return token yet - user must verify OTP first
-      const error = new Error('Login OTP sent to your email. Please verify to continue.');
-      error.requiresLoginOTP = true;
-      error.email = user.email;
-      throw error;
+    if (!emailResult.success) {
+      console.error(`[AuthService] ⚠️ Failed to send login OTP email to ${user.email}:`, emailResult.error);
     }
 
-    // For CLIENTS: Email is verified during registration, no OTP on login
-    console.log(`[AuthService] ✅ Client login successful: ${user.email}`);
-
-    const roleName = User.getRoleName(user.role);
-    const token = this.generateToken(user.id, user.email, roleName);
-
-    return {
-      token,
-      role: roleName
-    };
+    // Don't return token yet - user must verify OTP first
+    const error = new Error('Login OTP sent to your email. Please verify to continue.');
+    error.requiresLoginOTP = true;
+    error.email = user.email;
+    throw error;
   }
 
   /**
@@ -280,13 +283,19 @@ class AuthService {
 
   /**
    * Register user with 2FA (Email OTP verification)
-   * User account is created but NOT active until email is verified
+   * User is NOT saved to database until OTP is verified
    */
   async registerUserWith2FA(email, password, role = User.ROLES.CLIENT, rfc = null, whatsappNumber = null) {
-    // Check if user exists
+    // Check if user exists in database
     const existingUser = await User.findOne({ where: { email } });
     if (existingUser) {
       return null;
+    }
+
+    // Check if already pending
+    if (this.pendingRegistrations.has(email)) {
+      console.log(`[AuthService] ⚠️ Registration already pending for ${email}`);
+      // Allow re-registration to update OTP
     }
 
     const passwordHash = await this.hashPassword(password);
@@ -295,21 +304,19 @@ class AuthService {
     const otpCode = otpService.generateOTP();
     const otpExpiry = otpService.getOTPExpiry();
 
-    // Create user with email NOT verified
-    const user = await User.create({
-      email,
+    // Store in pending registrations (NOT in database yet)
+    this.pendingRegistrations.set(email, {
       passwordHash,
       role,
       rfc,
       whatsappNumber,
-      isActive: false, // Account not active until email verified
-      isEmailVerified: false,
       otpCode,
       otpExpiry,
-      otpAttempts: 0
+      otpAttempts: 0,
+      createdAt: new Date()
     });
 
-    console.log(`[AuthService] 👤 User created (pending verification): ${email}, OTP: ${otpCode}`);
+    console.log(`[AuthService] 👤 Pending registration stored (NOT in DB): ${email}, OTP: ${otpCode}`);
 
     // Send OTP email
     const userType = role === User.ROLES.ADMIN ? 'admin' : (role === User.ROLES.COMPANY ? 'company' : 'client');
@@ -323,24 +330,106 @@ class AuthService {
       console.error(`[AuthService] ⚠️ Failed to send OTP email to ${email}:`, emailResult.error);
     }
 
-    return user;
+    // Return a fake user object for compatibility
+    return {
+      id: 0, // Not created yet
+      email,
+      role,
+      rfc,
+      whatsappNumber,
+      isActive: false,
+      isEmailVerified: false
+    };
   }
 
   /**
-   * Verify email OTP and activate user account
+   * Verify email OTP and CREATE user account in database
    */
   async verifyEmailOTP(email, inputOTP) {
     console.log(`[AuthService] verifyEmailOTP called with email: ${email}, inputOTP: ${inputOTP}`);
 
-    // Find user by email
+    // Check if this is a pending registration (not in DB yet)
+    if (this.pendingRegistrations.has(email)) {
+      console.log(`[AuthService] Found pending registration for ${email}`);
+      const pendingData = this.pendingRegistrations.get(email);
+
+      // Check for too many failed attempts
+      if (otpService.isLockedOut(pendingData.otpAttempts)) {
+        console.log(`[AuthService] ❌ Too many failed attempts: ${pendingData.otpAttempts}`);
+        return {
+          success: false,
+          message: 'Too many failed attempts. Please request a new verification code.'
+        };
+      }
+
+      // Verify OTP
+      console.log(`[AuthService] Verifying OTP. Input: "${inputOTP}", Stored: "${pendingData.otpCode}"`);
+      const verification = otpService.verifyOTP(inputOTP, pendingData.otpCode, pendingData.otpExpiry);
+      console.log(`[AuthService] Verification result:`, verification);
+
+      if (!verification.valid) {
+        // Increment failed attempts
+        console.log(`[AuthService] ❌ OTP verification failed: ${verification.reason}`);
+        pendingData.otpAttempts += 1;
+        this.pendingRegistrations.set(email, pendingData);
+        return { success: false, message: verification.reason };
+      }
+
+      // OTP is valid! Create user in database NOW
+      console.log(`[AuthService] ✅ OTP verified! Creating user in database: ${email}`);
+
+      const user = await User.create({
+        email,
+        passwordHash: pendingData.passwordHash,
+        role: pendingData.role,
+        rfc: pendingData.rfc,
+        whatsappNumber: pendingData.whatsappNumber,
+        isActive: true,
+        isEmailVerified: true,
+        otpCode: null,
+        otpExpiry: null,
+        otpAttempts: 0
+      });
+
+      // Remove from pending registrations
+      this.pendingRegistrations.delete(email);
+
+      console.log(`[AuthService] ✅ User created in database with ID: ${user.id}`);
+
+      // Create admin notification for new client registration (only for CLIENT role)
+      if (pendingData.role === User.ROLES.CLIENT) {
+        await AdminNotification.create({
+          notificationType: AdminNotification.TYPES.NEW_USER,
+          relatedUserId: user.id,
+          message: `Nuevo cliente registrado: ${user.email}`,
+          isRead: false,
+          createdAt: new Date()
+        });
+        console.log(`[AuthService] 📢 Admin notification created for new client`);
+      }
+
+      // Generate token for the newly verified user (so they don't need to login with OTP again)
+      const roleName = User.getRoleName(user.role);
+      const token = this.generateToken(user.id, user.email, roleName);
+
+      return {
+        success: true,
+        message: 'Email verified successfully',
+        userId: user.id,
+        token: token,
+        role: roleName
+      };
+    }
+
+    // Check if user exists in database (for existing users who need to verify)
     const user = await User.findOne({ where: { email } });
 
     if (!user) {
-      console.log(`[AuthService] ❌ User not found: ${email}`);
-      return { success: false, message: 'User not found' };
+      console.log(`[AuthService] ❌ User not found in pending registrations or database: ${email}`);
+      return { success: false, message: 'User not found. Please register first.' };
     }
 
-    console.log(`[AuthService] User found. isEmailVerified: ${user.isEmailVerified}, otpCode: ${user.otpCode}, otpExpiry: ${user.otpExpiry}, otpAttempts: ${user.otpAttempts}`);
+    console.log(`[AuthService] User found in database. isEmailVerified: ${user.isEmailVerified}, otpCode: ${user.otpCode}, otpExpiry: ${user.otpExpiry}, otpAttempts: ${user.otpAttempts}`);
 
     // Check if already verified
     if (user.isEmailVerified) {
@@ -387,7 +476,40 @@ class AuthService {
    * Resend OTP to user's email
    */
   async resendOTP(email) {
-    // Find user by email
+    // Check if this is a pending registration
+    if (this.pendingRegistrations.has(email)) {
+      console.log(`[AuthService] Resending OTP for pending registration: ${email}`);
+      const pendingData = this.pendingRegistrations.get(email);
+
+      // Generate new OTP
+      const otpCode = otpService.generateOTP();
+      const otpExpiry = otpService.getOTPExpiry();
+
+      // Update pending data
+      pendingData.otpCode = otpCode;
+      pendingData.otpExpiry = otpExpiry;
+      pendingData.otpAttempts = 0;
+      this.pendingRegistrations.set(email, pendingData);
+
+      console.log(`[AuthService] 🔄 New OTP generated for pending registration ${email}: ${otpCode}`);
+
+      // Send OTP email
+      const userType = pendingData.role === User.ROLES.ADMIN ? 'admin' : (pendingData.role === User.ROLES.COMPANY ? 'company' : 'client');
+      const emailResult = await emailService.sendOTPEmail({
+        toEmail: email,
+        otpCode,
+        userType
+      });
+
+      if (!emailResult.success) {
+        console.error(`[AuthService] ⚠️ Failed to send OTP email to ${email}:`, emailResult.error);
+        return { success: false, message: 'Failed to send verification email' };
+      }
+
+      return { success: true, message: 'New verification code sent to your email' };
+    }
+
+    // Find user by email in database
     const user = await User.findOne({ where: { email } });
 
     if (!user) {
