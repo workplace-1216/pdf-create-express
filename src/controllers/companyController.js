@@ -779,12 +779,10 @@ class CompanyController {
         order: [['sentAt', 'DESC']]
       });
 
-      // Map to documents array
-      const documents = receivedDocs
-        .filter(rec => rec.documentProcessed) // Only include if processed document still exists
-        .map(rec => rec.documentProcessed);
+      // Filter out records where document was deleted
+      const validReceivedDocs = receivedDocs.filter(rec => rec.documentProcessed);
 
-      console.log(`[GetReceivedDocuments] 📋 Found ${documents.length} documents for company ${company.id}`);
+      console.log(`[GetReceivedDocuments] 📋 Found ${validReceivedDocs.length} documents for company ${company.id}`);
 
       // Debug: Show all documents with sentToCompanyId
       const allSentDocs = await DocumentProcessed.findAll({
@@ -796,14 +794,18 @@ class CompanyController {
         console.log(`  - Doc ${doc.id}: sentToCompanyId=${doc.sentToCompanyId}, isSentToCompany=${doc.isSentToCompany}, sentAt=${doc.sentToCompanyAt}`);
       });
 
-      const documentDtos = documents.map(doc => {
+      const documentDtos = validReceivedDocs.map(rec => {
+        const doc = rec.documentProcessed;
+
         // Generate RFC-timestamp filename to match download filename
         let rfcPrefix = 'XXXX';
+        let uploaderRFC = null;
         const extractedData = JSON.parse(doc.extractedJsonData || '{}');
 
         // Use the uploader's RFC (same logic as download function)
         if (doc.sourceDocument?.uploader?.rfc && doc.sourceDocument.uploader.rfc.length >= 4) {
-          rfcPrefix = doc.sourceDocument.uploader.rfc.substring(0, 4).toUpperCase();
+          uploaderRFC = doc.sourceDocument.uploader.rfc;
+          rfcPrefix = uploaderRFC.substring(0, 4).toUpperCase();
         }
 
         // Use the document creation date for timestamp (same as download)
@@ -822,8 +824,11 @@ class CompanyController {
           id: doc.id,
           fileName: fileName,
           clientEmail: doc.sourceDocument?.uploader?.email || 'unknown',
-          sentAt: doc.sentToCompanyAt,
-          extractedData: extractedData
+          sentAt: rec.sentAt, // Use junction table's sentAt (when it was sent to THIS company)
+          extractedData: {
+            ...extractedData,
+            rfc: uploaderRFC || extractedData.rfc // Use uploader's RFC, fallback to extracted RFC
+          }
         };
       });
 

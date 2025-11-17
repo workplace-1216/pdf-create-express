@@ -21,7 +21,7 @@ async function seedDatabase() {
 
     // Seed Admin User
     console.log('👤 Seeding Admin User...');
-    const adminEmail = 'meguiazt@gmail.com';
+    const adminEmail = 'ddolmatovtech@gmail.com';
     const adminPassword = 'pon87654321';
 
     const existingAdmin = await User.findOne({ where: { email: adminEmail } });
