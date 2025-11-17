@@ -92,23 +92,25 @@ class DocumentController {
         throw processingError; // Re-throw to be caught by outer catch
       }
 
-      // Generate RFC-based filename
+      // Generate RFC-based filename with timestamp
       const currentUser = await User.findByPk(userId);
       let rfcPrefix = 'XXXX';
-      let sequentialNumber = 1;
 
       if (currentUser && currentUser.rfc && currentUser.rfc.length >= 4) {
         rfcPrefix = currentUser.rfc.substring(0, 4).toUpperCase();
       }
 
-      // Get sequential number
-      const allUserDocs = await DocumentOriginal.findAll({
-        where: { uploaderUserId: userId },
-        order: [['uploadedAt', 'ASC'], ['id', 'ASC']]
-      });
-      sequentialNumber = allUserDocs.length;
+      // Generate timestamp in format YYYYMMDD-HHMMSS
+      const now = new Date();
+      const year = now.getFullYear();
+      const month = String(now.getMonth() + 1).padStart(2, '0');
+      const day = String(now.getDate()).padStart(2, '0');
+      const hours = String(now.getHours()).padStart(2, '0');
+      const minutes = String(now.getMinutes()).padStart(2, '0');
+      const seconds = String(now.getSeconds()).padStart(2, '0');
+      const timestamp = `${year}${month}${day}-${hours}${minutes}${seconds}`;
 
-      const processedFileName = `${rfcPrefix}-${sequentialNumber.toString().padStart(4, '0')}_document.pdf`;
+      const processedFileName = `${rfcPrefix}-${timestamp}.pdf`;
       console.log(`[DocumentController] 📝 STEP 3: Generated processed filename: ${processedFileName}`);
 
       // Store processed document
@@ -282,6 +284,7 @@ class DocumentController {
         processedDocuments = await DocumentProcessed.findAll({
           where: {
             status: DocumentProcessed.STATUS.APPROVED,
+            isDeletedByClient: false,
             sourceDocumentId: { [Op.in]: documentIds }
           },
           include: [
@@ -406,28 +409,29 @@ class DocumentController {
         return res.status(403).json({ message: 'Forbidden: Insufficient permissions' });
       }
 
-      // Generate filename
+      // Generate filename with RFC and timestamp
       let rfcPrefix = 'XXXX';
-      let sequentialNumber = 1;
+      let timestamp = '';
 
       if (processedDocument.sourceDocument?.uploader) {
         const uploader = processedDocument.sourceDocument.uploader;
-        
+
         if (uploader.rfc && uploader.rfc.length >= 4) {
           rfcPrefix = uploader.rfc.substring(0, 4).toUpperCase();
         }
 
-        // Get sequential number
-        const allUserDocs = await DocumentOriginal.findAll({
-          where: { uploaderUserId: uploader.id },
-          order: [['uploadedAt', 'ASC'], ['id', 'ASC']]
-        });
-
-        const docIndex = allUserDocs.findIndex(d => d.id === processedDocument.sourceDocument.id);
-        sequentialNumber = docIndex >= 0 ? docIndex + 1 : 1;
+        // Use document creation timestamp for consistent filename
+        const createdAt = processedDocument.createdAt || new Date();
+        const year = createdAt.getFullYear();
+        const month = String(createdAt.getMonth() + 1).padStart(2, '0');
+        const day = String(createdAt.getDate()).padStart(2, '0');
+        const hours = String(createdAt.getHours()).padStart(2, '0');
+        const minutes = String(createdAt.getMinutes()).padStart(2, '0');
+        const seconds = String(createdAt.getSeconds()).padStart(2, '0');
+        timestamp = `${year}${month}${day}-${hours}${minutes}${seconds}`;
       }
 
-      const fileName = `${rfcPrefix}-${sequentialNumber.toString().padStart(4, '0')}_document.pdf`;
+      const fileName = `${rfcPrefix}-${timestamp}.pdf`;
       console.log(`[DownloadProcessedDocument] ✅ Generated filename: ${fileName}`);
 
       res.setHeader('Content-Type', 'application/pdf');
@@ -1046,29 +1050,14 @@ class DocumentController {
 
           await processed.destroy();
         } else {
-          // Client: Hard delete (no history logging for client deletions)
-          console.log(`[DocumentController] 🗑️ Client deleting document ${id}, cleaning up files...`);
+          // Client: Soft delete (mark as deleted, don't actually remove)
+          console.log(`[DocumentController] 🗑️ Client soft-deleting document ${id} (marking as deleted)...`);
 
-          // Delete processed PDF from Cloudflare
-          const deletedProcessed = await storageService.deleteFile(processed.filePathFinalPdf);
-          console.log(`[DocumentController] ${deletedProcessed ? '✅' : '⚠️'} Processed PDF deleted: ${processed.filePathFinalPdf}`);
+          // Just mark as deleted by client - document remains in storage and companies can still access it
+          await processed.update({ isDeletedByClient: true });
 
-          // Delete original PDF from Cloudflare (if it exists)
-          if (processed.sourceDocument) {
-            // Only try to delete if filePath is set (original was saved)
-            if (processed.sourceDocument.filePath) {
-              const deletedOriginal = await storageService.deleteFile(processed.sourceDocument.filePath);
-              console.log(`[DocumentController] ${deletedOriginal ? '✅' : '⚠️'} Original PDF deleted: ${processed.sourceDocument.filePath}`);
-            } else {
-              console.log(`[DocumentController] ℹ️ Original PDF was not saved to storage, skipping deletion`);
-            }
-
-            // Hard delete source document from DB
-            await processed.sourceDocument.destroy();
-          }
-
-          // Hard delete processed document from DB
-          await processed.destroy();
+          console.log(`[DocumentController] ✅ Document ${id} marked as deleted by client`);
+          console.log(`[DocumentController] ℹ️ Files preserved - companies can still access this document`);
         }
 
         deleted++;
