@@ -796,13 +796,36 @@ class CompanyController {
         console.log(`  - Doc ${doc.id}: sentToCompanyId=${doc.sentToCompanyId}, isSentToCompany=${doc.isSentToCompany}, sentAt=${doc.sentToCompanyAt}`);
       });
 
-      const documentDtos = documents.map(doc => ({
-        id: doc.id,
-        fileName: doc.sourceDocument?.originalFileName || 'unknown',
-        clientEmail: doc.sourceDocument?.uploader?.email || 'unknown',
-        sentAt: doc.sentToCompanyAt,
-        extractedData: JSON.parse(doc.extractedJsonData || '{}')
-      }));
+      const documentDtos = documents.map(doc => {
+        // Generate RFC-timestamp filename to match download filename
+        let rfcPrefix = 'XXXX';
+        const extractedData = JSON.parse(doc.extractedJsonData || '{}');
+
+        // Use the uploader's RFC (same logic as download function)
+        if (doc.sourceDocument?.uploader?.rfc && doc.sourceDocument.uploader.rfc.length >= 4) {
+          rfcPrefix = doc.sourceDocument.uploader.rfc.substring(0, 4).toUpperCase();
+        }
+
+        // Use the document creation date for timestamp (same as download)
+        const createdAt = new Date(doc.createdAt);
+        const year = createdAt.getFullYear();
+        const month = String(createdAt.getMonth() + 1).padStart(2, '0');
+        const day = String(createdAt.getDate()).padStart(2, '0');
+        const hours = String(createdAt.getHours()).padStart(2, '0');
+        const minutes = String(createdAt.getMinutes()).padStart(2, '0');
+        const seconds = String(createdAt.getSeconds()).padStart(2, '0');
+        const timestamp = `${year}${month}${day}-${hours}${minutes}${seconds}`;
+
+        const fileName = `${rfcPrefix}-${timestamp}.pdf`;
+
+        return {
+          id: doc.id,
+          fileName: fileName,
+          clientEmail: doc.sourceDocument?.uploader?.email || 'unknown',
+          sentAt: doc.sentToCompanyAt,
+          extractedData: extractedData
+        };
+      });
 
       console.log(`[GetReceivedDocuments] ✅ Returning ${documentDtos.length} documents`);
 
