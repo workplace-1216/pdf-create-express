@@ -755,22 +755,34 @@ class CompanyController {
 
       console.log(`[GetReceivedDocuments] ✅ Company found: ${company.name} (ID: ${company.id})`);
 
-      // Get documents sent to this company (exclude deleted)
-      const documents = await DocumentProcessed.findAll({
+      // Get documents sent to this company from junction table
+      const CompanyReceivedDocument = require('../models').CompanyReceivedDocument;
+
+      const receivedDocs = await CompanyReceivedDocument.findAll({
         where: {
-          isSentToCompany: true,
-          sentToCompanyId: company.id,
-          isDeletedByCompany: false
+          companyId: company.id
         },
         include: [
           {
-            model: DocumentOriginal,
-            as: 'sourceDocument',
-            include: [{ model: User, as: 'uploader' }]
+            model: DocumentProcessed,
+            as: 'documentProcessed',
+            include: [
+              {
+                model: DocumentOriginal,
+                as: 'sourceDocument',
+                required: false, // LEFT JOIN - document might be deleted by client
+                include: [{ model: User, as: 'uploader' }]
+              }
+            ]
           }
         ],
-        order: [['sentToCompanyAt', 'DESC']]
+        order: [['sentAt', 'DESC']]
       });
+
+      // Map to documents array
+      const documents = receivedDocs
+        .filter(rec => rec.documentProcessed) // Only include if processed document still exists
+        .map(rec => rec.documentProcessed);
 
       console.log(`[GetReceivedDocuments] 📋 Found ${documents.length} documents for company ${company.id}`);
 
@@ -826,35 +838,47 @@ class CompanyController {
 
       console.log(`[DeleteReceivedDocument] Company: ${company.name} (ID: ${company.id})`);
 
-      // Get the document
-      const document = await DocumentProcessed.findByPk(documentId);
+      const CompanyReceivedDocument = require('../models').CompanyReceivedDocument;
 
-      if (!document) {
-        console.log(`[DeleteReceivedDocument] ❌ Document ${documentId} not found`);
-        return res.status(404).json({ message: 'Document not found' });
-      }
+      // Verify document was sent to THIS company by checking junction table
+      const receivedRecord = await CompanyReceivedDocument.findOne({
+        where: {
+          companyId: company.id,
+          documentProcessedId: documentId
+        }
+      });
 
-      // Verify document was sent to THIS company
-      if (!document.isSentToCompany || document.sentToCompanyId !== company.id) {
+      if (!receivedRecord) {
         console.log(`[DeleteReceivedDocument] ❌ Document ${documentId} was not sent to company ${company.id}`);
-        console.log(`[DeleteReceivedDocument]    isSentToCompany: ${document.isSentToCompany}, sentToCompanyId: ${document.sentToCompanyId}`);
         return res.status(403).json({ message: 'Document was not sent to your company' });
       }
 
       console.log(`[DeleteReceivedDocument] ✅ Authorization passed for company ${company.id}`);
 
-      // Company: Soft delete (mark as deleted, don't actually remove)
-      console.log(`[DeleteReceivedDocument] 🗑️ Company soft-deleting document ${documentId} (marking as deleted)...`);
+      // Company: Delete from company_received_documents table only
+      console.log(`[DeleteReceivedDocument] 🗑️ Company deleting received document record...`);
 
-      // Just mark as deleted by company - document remains in storage and clients can still access it
-      await document.update({ isDeletedByCompany: true });
-
-      console.log(`[DeleteReceivedDocument] ✅ Document ${documentId} marked as deleted by company`);
-      console.log(`[DeleteReceivedDocument] ℹ️ Files preserved - clients can still access this document`);
-
-      return res.status(200).json({
-        message: 'Document deleted from your company successfully'
+      // Delete the record from company_received_documents table
+      const deleteCount = await CompanyReceivedDocument.destroy({
+        where: {
+          companyId: company.id,
+          documentProcessedId: documentId
+        }
       });
+
+      if (deleteCount > 0) {
+        console.log(`[DeleteReceivedDocument] ✅ Document ${documentId} removed from company ${company.id}'s received list`);
+        console.log(`[DeleteReceivedDocument] ℹ️ Source document remains intact - client can still access it`);
+
+        return res.status(200).json({
+          message: 'Document deleted from your company successfully'
+        });
+      } else {
+        console.log(`[DeleteReceivedDocument] ⚠️ No record found to delete`);
+        return res.status(404).json({
+          message: 'Document record not found'
+        });
+      }
     } catch (error) {
       console.error('[DeleteReceivedDocument] ❌ Error:', error);
       return res.status(500).json({ message: `An error occurred: ${error.message}` });

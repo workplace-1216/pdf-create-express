@@ -284,7 +284,6 @@ class DocumentController {
         processedDocuments = await DocumentProcessed.findAll({
           where: {
             status: DocumentProcessed.STATUS.APPROVED,
-            isDeletedByClient: false,
             sourceDocumentId: { [Op.in]: documentIds }
           },
           include: [
@@ -375,7 +374,7 @@ class DocumentController {
       } else if (userRole === 'Company') {
         // Get company details
         const company = await Company.findOne({ where: { userId } });
-        
+
         if (!company) {
           console.log(`[DownloadProcessedDocument] ❌ Company not found for userId ${userId}`);
           return res.status(403).json({ message: 'Company account not found' });
@@ -383,19 +382,26 @@ class DocumentController {
 
         console.log(`[DownloadProcessedDocument] Company: ${company.name} (ID: ${company.id})`);
 
-        // Verify document was sent to THIS specific company
-        if (!processedDocument.isSentToCompany || processedDocument.sentToCompanyId !== company.id) {
+        // Verify document was sent to THIS specific company using junction table
+        const CompanyReceivedDocument = require('../models').CompanyReceivedDocument;
+        const receivedRecord = await CompanyReceivedDocument.findOne({
+          where: {
+            companyId: company.id,
+            documentProcessedId: id
+          }
+        });
+
+        if (!receivedRecord) {
           console.log(`[DownloadProcessedDocument] ❌ Authorization failed for company ${company.id}`);
-          console.log(`[DownloadProcessedDocument]    Document ${id}: isSentToCompany=${processedDocument.isSentToCompany}, sentToCompanyId=${processedDocument.sentToCompanyId}`);
-          return res.status(403).json({ 
+          console.log(`[DownloadProcessedDocument]    Document ${id} was not sent to this company`);
+          return res.status(403).json({
             message: 'Document was not sent to your company',
-            documentSentToCompanyId: processedDocument.sentToCompanyId,
             yourCompanyId: company.id
           });
         }
 
-        console.log(`[DownloadProcessedDocument] ✅ Authorization passed - downloading from company folder`);
-        pdfBytes = await storageService.getCompanyPdf(processedDocument.filePathFinalPdf, company.name);
+        console.log(`[DownloadProcessedDocument] ✅ Authorization passed - downloading from processed folder`);
+        pdfBytes = await storageService.getProcessedPdf(processedDocument.filePathFinalPdf);
       } else if (userRole === 'Client') {
         // Verify client owns this document
         if (processedDocument.sourceDocument?.uploaderUserId !== userId) {
@@ -439,6 +445,14 @@ class DocumentController {
       return res.send(pdfBytes);
     } catch (error) {
       console.error('Download error:', error);
+
+      // Provide user-friendly error messages
+      if (error.name === 'NoSuchKey' || error.Code === 'NoSuchKey') {
+        return res.status(404).json({
+          message: 'Document file not found in storage. It may have been deleted.'
+        });
+      }
+
       return res.status(500).json({ message: `Error downloading document: ${error.message}` });
     }
   }
@@ -458,7 +472,6 @@ class DocumentController {
       const { count, rows: processedDocuments } = await DocumentProcessed.findAndCountAll({
         where: {
           status: DocumentProcessed.STATUS.APPROVED,
-          isDeletedByClient: false,
           sourceDocumentId: { [Op.in]: documentIds }
         },
         limit: pageSize,
@@ -588,27 +601,29 @@ class DocumentController {
 
       const pdfBytes = await storageService.getProcessedPdf(processedDocument.filePathFinalPdf);
 
-      // Generate filename
+      // Generate filename with RFC + timestamp
       const currentUser = await User.findByPk(userId);
       let rfcPrefix = 'XXXX';
-      let sequentialNumber = 1;
 
       if (currentUser && currentUser.rfc && currentUser.rfc.length >= 4) {
         rfcPrefix = currentUser.rfc.substring(0, 4).toUpperCase();
       }
 
-      const allUserDocs = await DocumentOriginal.findAll({
-        where: { uploaderUserId: userId },
-        order: [['uploadedAt', 'ASC'], ['id', 'ASC']]
-      });
+      // Generate timestamp in format YYYYMMDD-HHMMSS
+      const now = new Date();
+      const year = now.getFullYear();
+      const month = String(now.getMonth() + 1).padStart(2, '0');
+      const day = String(now.getDate()).padStart(2, '0');
+      const hours = String(now.getHours()).padStart(2, '0');
+      const minutes = String(now.getMinutes()).padStart(2, '0');
+      const seconds = String(now.getSeconds()).padStart(2, '0');
+      const timestamp = `${year}${month}${day}-${hours}${minutes}${seconds}`;
 
-      const docIndex = allUserDocs.findIndex(d => d.id === processedDocument.sourceDocument.id);
-      sequentialNumber = docIndex >= 0 ? docIndex + 1 : 1;
-
-      const fileName = `${rfcPrefix}-${sequentialNumber.toString().padStart(4, '0')}_document.pdf`;
+      const fileName = `${rfcPrefix}-${timestamp}.pdf`;
 
       res.setHeader('Content-Type', 'application/pdf');
       res.setHeader('Content-Disposition', `attachment; filename="${fileName}"`);
+      res.setHeader('Content-Length', pdfBytes.length);
       return res.send(pdfBytes);
     } catch (error) {
       console.error('Download client document error:', error);
@@ -809,21 +824,19 @@ class DocumentController {
       if (sendingToCompany) {
         // Get company details
         const company = await Company.findByPk(selectedCompanyId);
-        
+
         if (!company) {
           console.log(`[SendByEmail] ❌ Company not found for ID: ${selectedCompanyId}`);
           return res.status(404).json({ message: 'Company not found' });
         }
 
         const companyName = company.name;
-        
-        console.log(`[DocumentController] 📋 Copying ${documents.length} documents to company folder: ${companyName} (ID: ${company.id})...`);
+
+        console.log(`[DocumentController] 📋 Preparing ${documents.length} documents for company: ${companyName} (ID: ${company.id})...`);
+
+        // Log each document to history
         for (const doc of documents) {
           try {
-            const companyPath = await storageService.copyToCompanyFolder(doc.filePathFinalPdf, companyName);
-            console.log(`[DocumentController] ✅ Document ${doc.id} copied to company folder: ${companyPath}`);
-            
-            // Log action to history (could add a new action type for SENT_TO_COMPANY)
             await DocumentHistory.logAction({
               actionType: DocumentHistory.ACTION_TYPES.SENT_TO_ADMIN, // Reusing for now, or create SENT_TO_COMPANY
               documentId: doc.id,
@@ -833,14 +846,14 @@ class DocumentController {
               fileSizeBytes: doc.sourceDocument?.fileSizeBytes || null,
               batchId: doc.sourceDocument?.uploadBatchId || null,
               metadata: {
-                sentPath: companyPath,
                 processedPath: doc.filePathFinalPdf,
                 sentToCompany: companyName,
                 companyId: selectedCompanyId
               }
             });
-          } catch (copyError) {
-            console.error(`[DocumentController] ⚠️ Failed to copy document ${doc.id} to company folder:`, copyError.message);
+            console.log(`[DocumentController] ✅ Document ${doc.id} logged to history`);
+          } catch (logError) {
+            console.error(`[DocumentController] ⚠️ Failed to log document ${doc.id} to history:`, logError.message);
             // Continue with other documents even if one fails
           }
         }
@@ -875,32 +888,25 @@ class DocumentController {
 
       // Mark documents as sent (to company or admin)
       if (sendingToCompany) {
-        console.log(`[DocumentController] 📝 Marking ${documentIds.length} documents as sent to company ${selectedCompanyId}...`);
+        console.log(`[DocumentController] 📝 Adding ${documentIds.length} documents to company ${selectedCompanyId}'s received list...`);
         console.log(`[DocumentController] Document IDs: ${documentIds.join(', ')}`);
-        
-        const updateResult = await DocumentProcessed.update(
-          { 
-            isSentToCompany: true,
-            sentToCompanyId: selectedCompanyId,
-            sentToCompanyAt: new Date()
-          },
-          {
-            where: { id: { [Op.in]: documentIds } }
-          }
-        );
 
-        console.log(`[DocumentController] 📝 Update result: ${updateResult[0]} rows affected`);
+        const CompanyReceivedDocument = require('../models').CompanyReceivedDocument;
 
-        // Verify the update worked
-        const verifyDocs = await DocumentProcessed.findAll({
-          where: { id: { [Op.in]: documentIds } },
-          attributes: ['id', 'isSentToCompany', 'sentToCompanyId', 'sentToCompanyAt']
-        });
+        // Insert records into company_received_documents table
+        const receivedRecords = [];
+        for (const docId of documentIds) {
+          receivedRecords.push({
+            companyId: selectedCompanyId,
+            documentProcessedId: docId,
+            clientEmail: currentUser.email,
+            sentAt: new Date(),
+            createdAt: new Date()
+          });
+        }
 
-        console.log(`[DocumentController] 🔍 Verification after update:`);
-        verifyDocs.forEach(doc => {
-          console.log(`  - Doc ${doc.id}: isSentToCompany=${doc.isSentToCompany}, sentToCompanyId=${doc.sentToCompanyId}, sentAt=${doc.sentToCompanyAt}`);
-        });
+        await CompanyReceivedDocument.bulkCreate(receivedRecords);
+        console.log(`[DocumentController] ✅ ${receivedRecords.length} records added to company_received_documents table`);
 
         // Create notification for company
         const notification = await CompanyNotification.create({
@@ -1050,14 +1056,34 @@ class DocumentController {
 
           await processed.destroy();
         } else {
-          // Client: Soft delete (mark as deleted, don't actually remove)
-          console.log(`[DocumentController] 🗑️ Client soft-deleting document ${id} (marking as deleted)...`);
+          // Client: Hard delete (remove source document)
+          console.log(`[DocumentController] 🗑️ Client deleting document ${id}...`);
 
-          // Just mark as deleted by client - document remains in storage and companies can still access it
-          await processed.update({ isDeletedByClient: true });
+          try {
+            // Delete processed PDF from storage
+            await storageService.deleteFile(processed.filePathFinalPdf);
+            console.log(`[DocumentController] ✅ Processed PDF deleted from storage`);
 
-          console.log(`[DocumentController] ✅ Document ${id} marked as deleted by client`);
-          console.log(`[DocumentController] ℹ️ Files preserved - companies can still access this document`);
+            // Delete original PDF from storage (if it exists)
+            if (processed.sourceDocument) {
+              if (processed.sourceDocument.filePath) {
+                await storageService.deleteFile(processed.sourceDocument.filePath);
+                console.log(`[DocumentController] ✅ Original PDF deleted from storage`);
+              }
+
+              // Delete source document from DB
+              await processed.sourceDocument.destroy();
+              console.log(`[DocumentController] ✅ Source document deleted from database`);
+            }
+
+            // Delete processed document from DB (CASCADE will delete company_received_documents records)
+            await processed.destroy();
+            console.log(`[DocumentController] ✅ Processed document deleted from database`);
+            console.log(`[DocumentController] ℹ️ Company received records also deleted via CASCADE`);
+          } catch (deleteError) {
+            console.error(`[DocumentController] ❌ Error deleting document ${id}:`, deleteError);
+            throw deleteError; // Re-throw to be caught by outer catch
+          }
         }
 
         deleted++;
@@ -1065,7 +1091,12 @@ class DocumentController {
 
       return res.status(200).json({ deleted });
     } catch (error) {
-      console.error('Delete batch error:', error);
+      console.error('========================================');
+      console.error('❌ DELETE BATCH ERROR:');
+      console.error('Error Message:', error.message);
+      console.error('Error Stack:', error.stack);
+      console.error('Error Name:', error.name);
+      console.error('========================================');
       return res.status(500).json({ message: `Error deleting documents: ${error.message}` });
     }
   }

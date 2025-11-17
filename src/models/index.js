@@ -9,6 +9,7 @@ const Company = require('./Company');
 const ClientCompany = require('./ClientCompany');
 const CompanyNotification = require('./CompanyNotification');
 const AdminNotification = require('./AdminNotification');
+const CompanyReceivedDocument = require('./CompanyReceivedDocument');
 
 // Define associations
 User.hasMany(DocumentOriginal, { foreignKey: 'uploaderUserId', as: 'uploadedDocuments' });
@@ -58,6 +59,13 @@ User.hasMany(CompanyNotification, { foreignKey: 'clientUserId', as: 'companyNoti
 AdminNotification.belongsTo(User, { foreignKey: 'relatedUserId', as: 'relatedUser' });
 AdminNotification.belongsTo(Company, { foreignKey: 'relatedCompanyId', as: 'relatedCompany' });
 
+// Company received documents associations (junction table)
+CompanyReceivedDocument.belongsTo(Company, { foreignKey: 'companyId', as: 'company' });
+Company.hasMany(CompanyReceivedDocument, { foreignKey: 'companyId', as: 'receivedDocumentRecords' });
+
+CompanyReceivedDocument.belongsTo(DocumentProcessed, { foreignKey: 'documentProcessedId', as: 'documentProcessed' });
+DocumentProcessed.hasMany(CompanyReceivedDocument, { foreignKey: 'documentProcessedId', as: 'companyReceipts' });
+
 // Sync database (create tables if they don't exist)
 const syncDatabase = async () => {
   try {
@@ -81,6 +89,7 @@ module.exports = {
   Company,
   ClientCompany,
   CompanyNotification,
-  AdminNotification
+  AdminNotification,
+  CompanyReceivedDocument
 };
 

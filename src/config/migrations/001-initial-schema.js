@@ -291,6 +291,7 @@ async function runMigration() {
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         status INTEGER NOT NULL DEFAULT 1 CHECK (status IN (1, 2, 3)),
         is_deleted_by_client BOOLEAN NOT NULL DEFAULT false,
+        is_deleted_by_company BOOLEAN NOT NULL DEFAULT false,
         is_sent_to_admin BOOLEAN NOT NULL DEFAULT false,
         sent_to_admin_at TIMESTAMP,
         is_sent_to_company BOOLEAN NOT NULL DEFAULT false,
@@ -300,46 +301,52 @@ async function runMigration() {
         FOREIGN KEY (template_rule_set_id) REFERENCES template_rule_sets(id) ON DELETE SET NULL,
         FOREIGN KEY (sent_to_company_id) REFERENCES companies(id) ON DELETE SET NULL
       );
-      
+
       COMMENT ON COLUMN document_processeds.status IS '1=Pending, 2=Approved, 3=Rejected';
     `);
     
     // Add missing columns if table already exists (for existing deployments)
     console.log('🔧 Checking for missing columns in document_processeds...');
     await sequelize.query(`
-      DO $$ 
+      DO $$
       BEGIN
-        IF NOT EXISTS (SELECT 1 FROM information_schema.columns 
+        IF NOT EXISTS (SELECT 1 FROM information_schema.columns
                        WHERE table_name='document_processeds' AND column_name='is_deleted_by_client') THEN
           ALTER TABLE document_processeds ADD COLUMN is_deleted_by_client BOOLEAN NOT NULL DEFAULT false;
           RAISE NOTICE 'Added is_deleted_by_client column';
         END IF;
-        
-        IF NOT EXISTS (SELECT 1 FROM information_schema.columns 
+
+        IF NOT EXISTS (SELECT 1 FROM information_schema.columns
+                       WHERE table_name='document_processeds' AND column_name='is_deleted_by_company') THEN
+          ALTER TABLE document_processeds ADD COLUMN is_deleted_by_company BOOLEAN NOT NULL DEFAULT false;
+          RAISE NOTICE 'Added is_deleted_by_company column';
+        END IF;
+
+        IF NOT EXISTS (SELECT 1 FROM information_schema.columns
                        WHERE table_name='document_processeds' AND column_name='is_sent_to_admin') THEN
           ALTER TABLE document_processeds ADD COLUMN is_sent_to_admin BOOLEAN NOT NULL DEFAULT false;
           RAISE NOTICE 'Added is_sent_to_admin column';
         END IF;
-        
-        IF NOT EXISTS (SELECT 1 FROM information_schema.columns 
+
+        IF NOT EXISTS (SELECT 1 FROM information_schema.columns
                        WHERE table_name='document_processeds' AND column_name='sent_to_admin_at') THEN
           ALTER TABLE document_processeds ADD COLUMN sent_to_admin_at TIMESTAMP;
           RAISE NOTICE 'Added sent_to_admin_at column';
         END IF;
-        
-        IF NOT EXISTS (SELECT 1 FROM information_schema.columns 
+
+        IF NOT EXISTS (SELECT 1 FROM information_schema.columns
                        WHERE table_name='document_processeds' AND column_name='is_sent_to_company') THEN
           ALTER TABLE document_processeds ADD COLUMN is_sent_to_company BOOLEAN NOT NULL DEFAULT false;
           RAISE NOTICE 'Added is_sent_to_company column';
         END IF;
-        
-        IF NOT EXISTS (SELECT 1 FROM information_schema.columns 
+
+        IF NOT EXISTS (SELECT 1 FROM information_schema.columns
                        WHERE table_name='document_processeds' AND column_name='sent_to_company_id') THEN
           ALTER TABLE document_processeds ADD COLUMN sent_to_company_id INTEGER REFERENCES companies(id) ON DELETE SET NULL;
           RAISE NOTICE 'Added sent_to_company_id column';
         END IF;
-        
-        IF NOT EXISTS (SELECT 1 FROM information_schema.columns 
+
+        IF NOT EXISTS (SELECT 1 FROM information_schema.columns
                        WHERE table_name='document_processeds' AND column_name='sent_to_company_at') THEN
           ALTER TABLE document_processeds ADD COLUMN sent_to_company_at TIMESTAMP;
           RAISE NOTICE 'Added sent_to_company_at column';
@@ -450,6 +457,33 @@ async function runMigration() {
     console.log();
 
     // ============================================
+    // 11. Create company_received_documents table
+    // ============================================
+    console.log('📋 Step 11: Creating company_received_documents table...');
+    await sequelize.query(`
+      CREATE TABLE IF NOT EXISTS company_received_documents (
+        id SERIAL PRIMARY KEY,
+        company_id INTEGER NOT NULL,
+        document_processed_id INTEGER NOT NULL,
+        client_email VARCHAR(255) NOT NULL,
+        sent_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY (company_id) REFERENCES companies(id) ON DELETE CASCADE,
+        FOREIGN KEY (document_processed_id) REFERENCES document_processeds(id) ON DELETE CASCADE
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_company_received_documents_company
+        ON company_received_documents(company_id);
+      CREATE INDEX IF NOT EXISTS idx_company_received_documents_document
+        ON company_received_documents(document_processed_id);
+
+      COMMENT ON TABLE company_received_documents IS 'Junction table tracking which documents were sent to which companies';
+      COMMENT ON COLUMN company_received_documents.client_email IS 'Email of the client who sent this document';
+    `);
+    console.log('✅ company_received_documents table created/verified');
+    console.log();
+
+    // ============================================
     // Final verification
     // ============================================
     console.log('🔍 Verifying all tables exist...');
@@ -471,7 +505,8 @@ async function runMigration() {
       'document_history',
       'notifications',
       'admin_notifications',
-      'company_notifications'
+      'company_notifications',
+      'company_received_documents'
     ];
 
     console.log(`✅ Found ${tableNames.length} tables in database`);
@@ -483,7 +518,7 @@ async function runMigration() {
       console.log(`⚠️  Missing tables: ${missingTables.join(', ')}`);
       throw new Error(`Missing required tables: ${missingTables.join(', ')}`);
     } else {
-      console.log('✅ All 10 required tables exist');
+      console.log('✅ All 11 required tables exist');
     }
 
     console.log();
