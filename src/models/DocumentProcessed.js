@@ -58,6 +58,12 @@ const DocumentProcessed = sequelize.define('DocumentProcessed', {
     defaultValue: false,
     field: 'is_deleted_by_client'
   },
+  isDeletedByCompany: {
+    type: DataTypes.BOOLEAN,
+    allowNull: false,
+    defaultValue: false,
+    field: 'is_deleted_by_company'
+  },
   isSentToAdmin: {
     type: DataTypes.BOOLEAN,
     allowNull: false,

@@ -755,11 +755,12 @@ class CompanyController {
 
       console.log(`[GetReceivedDocuments] ✅ Company found: ${company.name} (ID: ${company.id})`);
 
-      // Get documents sent to this company
+      // Get documents sent to this company (exclude deleted)
       const documents = await DocumentProcessed.findAll({
         where: {
           isSentToCompany: true,
-          sentToCompanyId: company.id
+          sentToCompanyId: company.id,
+          isDeletedByCompany: false
         },
         include: [
           {
@@ -842,45 +843,17 @@ class CompanyController {
 
       console.log(`[DeleteReceivedDocument] ✅ Authorization passed for company ${company.id}`);
 
-      // Delete PDF from company folder in Cloudflare R2
-      const storageService = require('../services/storageService');
-      const sanitizedCompanyName = company.name
-        .replace(/[^a-zA-Z0-9_-]/g, '_')
-        .replace(/_{2,}/g, '_')
-        .toLowerCase();
-      
-      const fileName = document.filePathFinalPdf.split('/').pop();
-      const companyPdfPath = `company/${sanitizedCompanyName}/${fileName}`;
+      // Company: Soft delete (mark as deleted, don't actually remove)
+      console.log(`[DeleteReceivedDocument] 🗑️ Company soft-deleting document ${documentId} (marking as deleted)...`);
 
-      console.log(`[DeleteReceivedDocument] 🗑️ Deleting PDF from company folder: ${companyPdfPath}`);
+      // Just mark as deleted by company - document remains in storage and clients can still access it
+      await document.update({ isDeletedByCompany: true });
 
-      const deleted = await storageService.deleteFile(companyPdfPath);
-      
-      if (deleted) {
-        console.log(`[DeleteReceivedDocument] ✅ PDF deleted from company folder`);
-      } else {
-        console.log(`[DeleteReceivedDocument] ⚠️ Failed to delete PDF from company folder (may not exist)`);
-      }
+      console.log(`[DeleteReceivedDocument] ✅ Document ${documentId} marked as deleted by company`);
+      console.log(`[DeleteReceivedDocument] ℹ️ Files preserved - clients can still access this document`);
 
-      // Update document to mark as not sent to this company anymore
-      // If the document was only sent to this company, we can unmark it
-      // But we DON'T delete it from database or client's folder
-      await DocumentProcessed.update(
-        {
-          isSentToCompany: false,
-          sentToCompanyId: null,
-          sentToCompanyAt: null
-        },
-        {
-          where: { id: documentId, sentToCompanyId: company.id }
-        }
-      );
-
-      console.log(`[DeleteReceivedDocument] ✅ Document ${documentId} unmarked from company ${company.id}`);
-
-      return res.status(200).json({ 
-        message: 'Document deleted from your company successfully',
-        deletedFromStorage: deleted
+      return res.status(200).json({
+        message: 'Document deleted from your company successfully'
       });
     } catch (error) {
       console.error('[DeleteReceivedDocument] ❌ Error:', error);
