@@ -1,4 +1,6 @@
 const axios = require('axios');
+const conversationTracker = require('./whatsappConversationTracker');
+const { canSendMessage, getRemainingWindowTime, cleanPhoneNumber } = require('../utils/whatsappWindowHelper');
 
 class WhatsAppService {
   constructor() {
@@ -28,9 +30,11 @@ class WhatsAppService {
    * @param {string} params.companyName - Company name
    * @param {string} params.fromName - Client name or email
    * @param {number} params.documentCount - Number of documents
+   * @param {boolean} params.forceTemplate - Force using template message (optional, default: false)
+   * @param {boolean} params.skipWindowCheck - Skip 24-hour window validation (optional, default: false)
    * @returns {Promise<Object>} - WhatsApp send result
    */
-  async sendDocumentNotification({ toWhatsApp, companyName, fromName, documentCount }) {
+  async sendDocumentNotification({ toWhatsApp, companyName, fromName, documentCount, forceTemplate = false, skipWindowCheck = false }) {
     if (!this.accessToken || !this.phoneNumberId) {
       console.warn('⚠️ WhatsApp service not configured. Message not sent.');
       return { success: false, message: 'WhatsApp service not configured' };
@@ -38,9 +42,33 @@ class WhatsAppService {
 
     try {
       // Clean phone number (remove + and spaces)
-      const cleanNumber = toWhatsApp.replace(/[\s+()-]/g, '');
+      const cleanNumber = cleanPhoneNumber(toWhatsApp);
 
-      console.log(`[WhatsAppService] 📱 Sending WhatsApp message to ${cleanNumber}...`);
+      console.log(`[WhatsAppService] 📱 Preparing to send WhatsApp message to ${cleanNumber}...`);
+
+      // Check 24-hour window unless skipWindowCheck is true
+      if (!skipWindowCheck) {
+        const lastMessageAt = await conversationTracker.getLastMessageTimestamp(cleanNumber);
+        const validation = canSendMessage(lastMessageAt, forceTemplate);
+
+        console.log(`[WhatsAppService] 🕐 Window Status: ${validation.reason}`);
+
+        if (!validation.canSend) {
+          console.warn(`[WhatsAppService] ⚠️ Cannot send message: ${validation.reason}`);
+          return {
+            success: false,
+            error: validation.reason,
+            requiresTemplate: validation.requiresTemplate,
+            suggestion: 'Use sendTemplateMessage() or set forceTemplate: true'
+          };
+        }
+
+        if (validation.expiresAt) {
+          console.log(`[WhatsAppService] ⏰ Window expires at: ${validation.expiresAt.toISOString()}`);
+        }
+      } else {
+        console.log(`[WhatsAppService] ⚠️ Skipping 24-hour window check (skipWindowCheck: true)`);
+      }
 
       // Compose message
       const message = this._composeDocumentMessage(companyName, fromName, documentCount);
@@ -189,6 +217,46 @@ _Este es un mensaje automático del Portal PDF._`;
       console.error('❌ WhatsApp connection failed:', error.response?.data?.error?.message || error.message);
       return false;
     }
+  }
+
+  /**
+   * Check if a recipient is within the 24-hour messaging window
+   * @param {string} phoneNumber - Recipient WhatsApp number
+   * @returns {Promise<Object>} - Window status information
+   */
+  async checkMessagingWindow(phoneNumber) {
+    const cleanNumber = cleanPhoneNumber(phoneNumber);
+    const lastMessageAt = await conversationTracker.getLastMessageTimestamp(cleanNumber);
+    const validation = canSendMessage(lastMessageAt, false);
+    const remaining = getRemainingWindowTime(lastMessageAt);
+
+    return {
+      phoneNumber: cleanNumber,
+      canSendFreeform: validation.canSend,
+      requiresTemplate: validation.requiresTemplate,
+      lastIncomingMessage: lastMessageAt,
+      windowStatus: validation.reason,
+      timeRemaining: remaining.formatted,
+      expiresAt: remaining.expiresAt
+    };
+  }
+
+  /**
+   * Get conversation information for a recipient
+   * @param {string} phoneNumber - Recipient WhatsApp number
+   * @returns {Promise<Object|null>} - Conversation info or null
+   */
+  async getConversationInfo(phoneNumber) {
+    const cleanNumber = cleanPhoneNumber(phoneNumber);
+    return await conversationTracker.getConversationInfo(cleanNumber);
+  }
+
+  /**
+   * Get statistics about all conversations
+   * @returns {Promise<Object>} - Conversation statistics
+   */
+  async getConversationStats() {
+    return await conversationTracker.getStats();
   }
 }
 

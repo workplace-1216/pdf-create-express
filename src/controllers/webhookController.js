@@ -3,6 +3,8 @@
  * Handles webhook verification and incoming events from WhatsApp Cloud API
  */
 
+const conversationTracker = require('../services/whatsappConversationTracker');
+
 class WebhookController {
   /**
    * Verify webhook endpoint (GET request)
@@ -155,7 +157,7 @@ class WebhookController {
    *
    * @param {Object} message - Message object from webhook
    */
-  handleIncomingMessage(message) {
+  async handleIncomingMessage(message) {
     const messageId = message.id;
     const from = message.from;
     const timestamp = message.timestamp;
@@ -167,10 +169,20 @@ class WebhookController {
     console.log(`  Type: ${type}`);
     console.log(`  Timestamp: ${timestamp}`);
 
+    // Track this incoming message to open/refresh the 24-hour window
+    try {
+      const messageDate = timestamp ? new Date(parseInt(timestamp) * 1000) : new Date();
+      await conversationTracker.trackIncomingMessage(from, messageId, messageDate);
+      console.log(`[WhatsApp Webhook] ✅ 24-hour window opened/refreshed for ${from}`);
+    } catch (error) {
+      console.error('[WhatsApp Webhook] ❌ Error tracking conversation:', error);
+    }
+
     // Handle different message types
     if (type === 'text' && message.text) {
       console.log(`  Text: ${message.text.body}`);
       // TODO: Process incoming text message
+      // You can add auto-reply logic here if needed
     }
 
     // You can handle other types: image, document, audio, video, etc.

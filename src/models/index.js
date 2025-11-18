@@ -10,6 +10,7 @@ const ClientCompany = require('./ClientCompany');
 const CompanyNotification = require('./CompanyNotification');
 const AdminNotification = require('./AdminNotification');
 const CompanyReceivedDocument = require('./CompanyReceivedDocument');
+const WhatsAppConversation = require('./WhatsAppConversation');
 
 // Define associations
 User.hasMany(DocumentOriginal, { foreignKey: 'uploaderUserId', as: 'uploadedDocuments' });
@@ -90,6 +91,7 @@ module.exports = {
   ClientCompany,
   CompanyNotification,
   AdminNotification,
-  CompanyReceivedDocument
+  CompanyReceivedDocument,
+  WhatsAppConversation
 };
 
