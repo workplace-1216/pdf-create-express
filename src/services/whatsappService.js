@@ -8,7 +8,7 @@ class WhatsAppService {
     this.accessToken = process.env.WHATSAPP_ACCESS_TOKEN;
     this.phoneNumberId = process.env.WHATSAPP_PHONE_NUMBER_ID;
     this.businessAccountId = process.env.WHATSAPP_BUSINESS_ACCOUNT_ID;
-    this.apiVersion = process.env.WHATSAPP_API_VERSION || 'v21.0';
+    this.apiVersion = process.env.WHATSAPP_API_VERSION || 'v22.0';
     this.apiUrl = `https://graph.facebook.com/${this.apiVersion}/${this.phoneNumberId}/messages`;
 
     this.initializeWhatsApp();
