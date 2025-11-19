@@ -955,7 +955,8 @@ class DocumentController {
               toWhatsApp: company.whatsappNumber,
               companyName: company.name,
               fromName: currentUser.email,
-              documentCount: documentIds.length
+              documentCount: documentIds.length,
+              skipWindowCheck: true  // Allow notifications even if company hasn't messaged first
             });
 
             if (whatsappResult.success) {
