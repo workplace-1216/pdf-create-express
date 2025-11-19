@@ -951,13 +951,45 @@ class DocumentController {
           if (company && company.whatsappNumber) {
             console.log(`[DocumentController] 📱 Sending WhatsApp message to company: ${company.whatsappNumber}...`);
 
-            const whatsappResult = await whatsappService.sendDocumentNotification({
-              toWhatsApp: company.whatsappNumber,
-              companyName: company.name,
-              fromName: currentUser.email,
-              documentCount: documentIds.length,
-              skipWindowCheck: true  // Allow notifications even if company hasn't messaged first
-            });
+            // Check if we're within the 24-hour messaging window
+            const windowStatus = await whatsappService.checkMessagingWindow(company.whatsappNumber);
+            console.log(`[DocumentController] 🕐 Window status: ${windowStatus.windowStatus}`);
+
+            let whatsappResult;
+
+            if (windowStatus.canSendFreeform) {
+              // Within 24h window - send freeform message
+              console.log(`[DocumentController] ✅ Within 24h window (${windowStatus.timeRemaining} remaining) - sending freeform message`);
+
+              whatsappResult = await whatsappService.sendDocumentNotification({
+                toWhatsApp: company.whatsappNumber,
+                companyName: company.name,
+                fromName: currentUser.email,
+                documentCount: documentIds.length
+              });
+            } else {
+              // Outside 24h window - use template message
+              console.log(`[DocumentController] ⚠️ Outside 24h window - using template message`);
+
+              // Check if template name is configured
+              const templateName = process.env.WHATSAPP_DOCUMENT_TEMPLATE_NAME || 'document_notification';
+
+              whatsappResult = await whatsappService.sendTemplateMessage({
+                toWhatsApp: company.whatsappNumber,
+                templateName: templateName,
+                languageCode: 'es',
+                components: [
+                  {
+                    type: 'body',
+                    parameters: [
+                      { type: 'text', text: company.name },
+                      { type: 'text', text: documentIds.length.toString() },
+                      { type: 'text', text: currentUser.email }
+                    ]
+                  }
+                ]
+              });
+            }
 
             if (whatsappResult.success) {
               console.log(`[DocumentController] ✅ WhatsApp message sent successfully to ${company.whatsappNumber}`);
